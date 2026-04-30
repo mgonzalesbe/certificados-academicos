@@ -1,0 +1,693 @@
+import os
+import pyodbc
+
+# ==========================================================================
+# CONFIGURACIÓN DE BASE DE DATOS (SQL Server)
+# ==========================================================================
+_DRIVER = os.environ.get("DB_DRIVER", "ODBC Driver 17 for SQL Server")
+_SERVER = os.environ.get("DB_SERVER", "DESKTOP-B8EBRI2")
+_DATABASE = os.environ.get("DB_NAME", "CertificadosDB")
+_TRUSTED = os.environ.get("DB_TRUSTED", "yes").lower() in ("1", "true", "yes", "y")
+
+
+def _build_connection_string():
+    parts = [
+        f"DRIVER={{{_DRIVER}}};",
+        f"SERVER={_SERVER};",
+        f"DATABASE={_DATABASE};",
+    ]
+    if _TRUSTED:
+        parts.append("Trusted_Connection=yes;")
+    else:
+        user = os.environ.get("DB_USER", "")
+        pwd = os.environ.get("DB_PASSWORD", "")
+        parts.append(f"UID={user};PWD={pwd};")
+    return "".join(parts)
+
+
+DB_CONNECTION_STRING = _build_connection_string()
+
+
+def get_db_connection():
+    """Establece y devuelve la conexión a la base de datos."""
+    try:
+        conn = pyodbc.connect(DB_CONNECTION_STRING)
+        return conn
+    except Exception as e:
+        print(f"ADVERTENCIA: No se pudo conectar a SQL Server. Error: {e}")
+        return None
+
+
+def _table_exists(cursor, nombre_tabla: str) -> bool:
+    cursor.execute("SELECT 1 FROM sys.tables WHERE name = ?", (nombre_tabla,))
+    return cursor.fetchone() is not None
+
+
+def _column_exists(cursor, nombre_tabla: str, nombre_columna: str) -> bool:
+    cursor.execute(
+        """
+        SELECT 1 FROM sys.columns
+        WHERE object_id = OBJECT_ID(?) AND name = ?
+        """,
+        (nombre_tabla, nombre_columna),
+    )
+    return cursor.fetchone() is not None
+
+
+def _rename_if_exists(cursor, tabla: str, columna_ant: str, columna_nueva: str):
+    if _column_exists(cursor, tabla, columna_ant) and not _column_exists(cursor, tabla, columna_nueva):
+        cursor.execute(f"EXEC sp_rename N'{tabla}.{columna_ant}', N'{columna_nueva}', N'COLUMN'")
+
+
+def _quote_ident(identifier: str) -> str:
+    return f"[{identifier.replace(']', ']]')}]"
+
+
+def _drop_column_and_dependencies(cursor, tabla: str, columna: str):
+    if not _column_exists(cursor, tabla, columna):
+        return
+
+    cursor.execute(
+        """
+        SELECT dc.name
+        FROM sys.default_constraints dc
+        INNER JOIN sys.columns c
+            ON c.default_object_id = dc.object_id
+        WHERE dc.parent_object_id = OBJECT_ID(?) AND c.name = ?
+        """,
+        (tabla, columna),
+    )
+    for row in cursor.fetchall():
+        cursor.execute(
+            f"ALTER TABLE {_quote_ident(tabla)} DROP CONSTRAINT {_quote_ident(row.name)}"
+        )
+
+    cursor.execute(
+        """
+        SELECT i.name, i.is_primary_key, i.is_unique_constraint
+        FROM sys.indexes i
+        INNER JOIN sys.index_columns ic
+            ON ic.object_id = i.object_id AND ic.index_id = i.index_id
+        INNER JOIN sys.columns c
+            ON c.object_id = ic.object_id AND c.column_id = ic.column_id
+        WHERE i.object_id = OBJECT_ID(?) AND c.name = ?
+        """,
+        (tabla, columna),
+    )
+    for row in cursor.fetchall():
+        if row.is_primary_key:
+            continue
+        if row.is_unique_constraint:
+            cursor.execute(
+                f"ALTER TABLE {_quote_ident(tabla)} DROP CONSTRAINT {_quote_ident(row.name)}"
+            )
+        else:
+            cursor.execute(
+                f"DROP INDEX {_quote_ident(row.name)} ON {_quote_ident(tabla)}"
+            )
+
+    cursor.execute(
+        f"ALTER TABLE {_quote_ident(tabla)} DROP COLUMN {_quote_ident(columna)}"
+    )
+
+
+def _ensure_tipos_credencial(cursor):
+    if _table_exists(cursor, "TiposCredencial"):
+        if _column_exists(cursor, "TiposCredencial", "OrdenPresentacion"):
+            cursor.execute("ALTER TABLE TiposCredencial DROP COLUMN OrdenPresentacion")
+        _drop_column_and_dependencies(cursor, "TiposCredencial", "Codigo")
+        return
+    cursor.execute(
+        """
+        CREATE TABLE TiposCredencial (
+            IdTipoCredencial INT IDENTITY(1,1) NOT NULL PRIMARY KEY,
+            Nombre NVARCHAR(200) NOT NULL,
+            Activo BIT NOT NULL DEFAULT 1
+        )
+        """
+    )
+
+
+def _ensure_cursos(cursor):
+    if _table_exists(cursor, "Cursos"):
+        _drop_column_and_dependencies(cursor, "Cursos", "Codigo")
+        _drop_column_and_dependencies(cursor, "Cursos", "Descripcion")
+        return
+    cursor.execute(
+        """
+        CREATE TABLE Cursos (
+            IdCurso INT IDENTITY(1,1) NOT NULL PRIMARY KEY,
+            Nombre NVARCHAR(200) NOT NULL,
+            Activo BIT NOT NULL DEFAULT 1,
+            FechaCreacion DATETIME2 NOT NULL DEFAULT SYSDATETIME()
+        )
+        """
+    )
+
+
+def _migrate_users_to_usuarios(cursor):
+    if _table_exists(cursor, "Usuarios") or not _table_exists(cursor, "Users"):
+        return
+    cursor.execute("EXEC sp_rename N'Users', N'Usuarios'")
+
+
+def _ensure_usuarios_columns(cursor):
+    if not _table_exists(cursor, "Usuarios"):
+        return
+    _rename_if_exists(cursor, "Usuarios", "Username", "NombreUsuario")
+    _rename_if_exists(cursor, "Usuarios", "Email", "Correo")
+    _rename_if_exists(cursor, "Usuarios", "PasswordHash", "HashContrasena")
+    _rename_if_exists(cursor, "Usuarios", "Role", "Rol")
+    _rename_if_exists(cursor, "Usuarios", "Id", "IdUsuario")
+
+
+def _create_usuarios_fresh(cursor):
+    cursor.execute(
+        """
+        CREATE TABLE Usuarios (
+            IdUsuario INT IDENTITY(1,1) NOT NULL PRIMARY KEY,
+            NombreUsuario NVARCHAR(100) NOT NULL UNIQUE,
+            Correo NVARCHAR(200) NOT NULL UNIQUE,
+            HashContrasena NVARCHAR(256) NOT NULL,
+            Rol NVARCHAR(20) NOT NULL,
+            DocumentoIdentidad NVARCHAR(32) NULL,
+            Nombres NVARCHAR(100) NULL,
+            Apellidos NVARCHAR(100) NULL
+        )
+        """
+    )
+
+
+def _ensure_usuarios_index(cursor):
+    cursor.execute(
+        """
+        IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'UX_Usuarios_DocumentoIdentidad' AND object_id = OBJECT_ID(N'Usuarios'))
+        CREATE UNIQUE NONCLUSTERED INDEX UX_Usuarios_DocumentoIdentidad ON Usuarios(DocumentoIdentidad)
+        WHERE DocumentoIdentidad IS NOT NULL
+        """
+    )
+
+
+def _ensure_usuarios(cursor):
+    if not _table_exists(cursor, "Usuarios"):
+        if _table_exists(cursor, "Users"):
+            _migrate_users_to_usuarios(cursor)
+        else:
+            _create_usuarios_fresh(cursor)
+    _ensure_usuarios_columns(cursor)
+    _ensure_usuarios_index(cursor)
+
+
+def _migrate_estadisticas_table(cursor):
+    if _table_exists(cursor, "EstadisticasAplicacion") or not _table_exists(cursor, "EstadisticasApp"):
+        return
+    cursor.execute("EXEC sp_rename N'EstadisticasApp', N'EstadisticasAplicacion'")
+
+
+def _ensure_estadisticas_columns(cursor):
+    if not _table_exists(cursor, "EstadisticasAplicacion"):
+        return
+    _rename_if_exists(cursor, "EstadisticasAplicacion", "Id", "IdEstadistica")
+    _rename_if_exists(cursor, "EstadisticasAplicacion", "TotalGenTime", "TiempoTotalGeneracionSeg")
+    _rename_if_exists(cursor, "EstadisticasAplicacion", "GenCount", "CantidadGeneraciones")
+    _rename_if_exists(cursor, "EstadisticasAplicacion", "TotalVerTime", "TiempoTotalVerificacionSeg")
+    _rename_if_exists(cursor, "EstadisticasAplicacion", "VerCount", "CantidadVerificaciones")
+    _rename_if_exists(cursor, "EstadisticasAplicacion", "ValidCount", "CantidadValidas")
+    _rename_if_exists(cursor, "EstadisticasAplicacion", "InvalidCount", "CantidadInvalidas")
+    if not _column_exists(cursor, "EstadisticasAplicacion", "IdUltimoCertificadoGenerado"):
+        cursor.execute("ALTER TABLE EstadisticasAplicacion ADD IdUltimoCertificadoGenerado VARCHAR(50) NULL")
+
+
+def _create_estadisticas_fresh(cursor):
+    cursor.execute(
+        """
+        CREATE TABLE EstadisticasAplicacion (
+            IdEstadistica INT NOT NULL PRIMARY KEY DEFAULT 1,
+            TiempoTotalGeneracionSeg FLOAT NOT NULL DEFAULT 0,
+            CantidadGeneraciones INT NOT NULL DEFAULT 0,
+            TiempoTotalVerificacionSeg FLOAT NOT NULL DEFAULT 0,
+            CantidadVerificaciones INT NOT NULL DEFAULT 0,
+            CantidadValidas INT NOT NULL DEFAULT 0,
+            CantidadInvalidas INT NOT NULL DEFAULT 0,
+            IdUltimoCertificadoGenerado VARCHAR(50) NULL
+        )
+        """
+    )
+
+
+def _ensure_estadisticas(cursor):
+    if not _table_exists(cursor, "EstadisticasAplicacion"):
+        if _table_exists(cursor, "EstadisticasApp"):
+            _migrate_estadisticas_table(cursor)
+        else:
+            _create_estadisticas_fresh(cursor)
+    _ensure_estadisticas_columns(cursor)
+
+
+def _migrate_certificados_columns(cursor):
+    if not _table_exists(cursor, "Certificados"):
+        return
+    _rename_if_exists(cursor, "Certificados", "ID", "IdCertificado")
+    _rename_if_exists(cursor, "Certificados", "StudentName", "NombreEstudiante")
+    _rename_if_exists(cursor, "Certificados", "IssueDate", "FechaEmision")
+    _rename_if_exists(cursor, "Certificados", "SignatureData", "FirmaDigital")
+    _rename_if_exists(cursor, "Certificados", "Status", "Estado")
+    _rename_if_exists(cursor, "Certificados", "PdfContent", "ContenidoPdf")
+    _rename_if_exists(cursor, "Certificados", "RecipientUserId", "IdUsuarioDestinatario")
+    _rename_if_exists(cursor, "Certificados", "CreatedByUserId", "IdUsuarioCreador")
+    _rename_if_exists(cursor, "Certificados", "TrainingHours", "HorasFormacion")
+    _rename_if_exists(cursor, "Certificados", "TrainingMonths", "MesesFormacion")
+    _rename_if_exists(cursor, "Certificados", "BodyText", "TextoCuerpo")
+    if not _column_exists(cursor, "Certificados", "IdCurso"):
+        cursor.execute("ALTER TABLE Certificados ADD IdCurso INT NULL")
+    if not _column_exists(cursor, "Certificados", "IdTipoCredencial"):
+        cursor.execute("ALTER TABLE Certificados ADD IdTipoCredencial INT NULL")
+    if not _column_exists(cursor, "Certificados", "FechaCreacion"):
+        cursor.execute("ALTER TABLE Certificados ADD FechaCreacion DATETIME2 NOT NULL DEFAULT SYSDATETIME()")
+    if not _column_exists(cursor, "Certificados", "TiempoGeneracionSeg"):
+        cursor.execute("ALTER TABLE Certificados ADD TiempoGeneracionSeg FLOAT NULL")
+    if not _column_exists(cursor, "Certificados", "TiempoVerificacionSeg"):
+        cursor.execute("ALTER TABLE Certificados ADD TiempoVerificacionSeg FLOAT NULL")
+    if not _column_exists(cursor, "Certificados", "EsValido"):
+        cursor.execute("ALTER TABLE Certificados ADD EsValido BIT NULL")
+
+
+def _create_certificados_fresh(cursor):
+    cursor.execute(
+        """
+        CREATE TABLE Certificados (
+            IdCertificado VARCHAR(50) NOT NULL PRIMARY KEY,
+            NombreEstudiante NVARCHAR(100) NULL,
+            IdCurso INT NULL,
+            FechaEmision VARCHAR(50) NULL,
+            IdTipoCredencial INT NULL,
+            FirmaDigital NVARCHAR(MAX) NULL,
+            Estado NVARCHAR(20) NULL,
+            ContenidoPdf VARBINARY(MAX) NULL,
+            IdUsuarioDestinatario INT NULL,
+            IdUsuarioCreador INT NULL,
+            HorasFormacion INT NULL,
+            MesesFormacion INT NULL,
+            TextoCuerpo NVARCHAR(MAX) NULL,
+            FechaCreacion DATETIME2 NOT NULL DEFAULT SYSDATETIME(),
+            TiempoGeneracionSeg FLOAT NULL,
+            TiempoVerificacionSeg FLOAT NULL,
+            EsValido BIT NULL
+        )
+        """
+    )
+
+
+def _ensure_certificados(cursor):
+    if not _table_exists(cursor, "Certificados"):
+        _create_certificados_fresh(cursor)
+    else:
+        _migrate_certificados_columns(cursor)
+    cursor.execute(
+        """
+        IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'IX_Certificados_IdUsuarioDestinatario' AND object_id = OBJECT_ID(N'Certificados'))
+        CREATE NONCLUSTERED INDEX IX_Certificados_IdUsuarioDestinatario ON Certificados(IdUsuarioDestinatario)
+        """
+    )
+    cursor.execute(
+        """
+        IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'IX_Certificados_IdCurso' AND object_id = OBJECT_ID(N'Certificados'))
+        CREATE NONCLUSTERED INDEX IX_Certificados_IdCurso ON Certificados(IdCurso)
+        """
+    )
+    cursor.execute(
+        """
+        IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'IX_Certificados_IdTipoCredencial' AND object_id = OBJECT_ID(N'Certificados'))
+        CREATE NONCLUSTERED INDEX IX_Certificados_IdTipoCredencial ON Certificados(IdTipoCredencial)
+        """
+    )
+
+
+def _ensure_inscripciones(cursor):
+    if not _table_exists(cursor, "Inscripciones"):
+        cursor.execute(
+            """
+            CREATE TABLE Inscripciones (
+                IdInscripcion INT IDENTITY(1,1) NOT NULL PRIMARY KEY,
+                IdUsuario INT NOT NULL,
+                IdCurso INT NOT NULL,
+                IdCertificado VARCHAR(50) NULL,
+                FechaInscripcion DATETIME2 NOT NULL DEFAULT SYSDATETIME(),
+                Estado NVARCHAR(20) NOT NULL DEFAULT N'Activa',
+                CONSTRAINT UX_Inscripciones_Usuario_Curso UNIQUE (IdUsuario, IdCurso)
+            )
+            """
+        )
+    elif not _column_exists(cursor, "Inscripciones", "IdCertificado"):
+        cursor.execute("ALTER TABLE Inscripciones ADD IdCertificado VARCHAR(50) NULL")
+
+
+def _ensure_auditoria(cursor):
+    if _table_exists(cursor, "AuditoriaCertificados"):
+        return
+    cursor.execute(
+        """
+        CREATE TABLE AuditoriaCertificados (
+            IdAuditoria BIGINT IDENTITY(1,1) NOT NULL PRIMARY KEY,
+            IdCertificado VARCHAR(50) NULL,
+            Accion NVARCHAR(50) NOT NULL,
+            IdUsuario INT NULL,
+            FechaHora DATETIME2 NOT NULL DEFAULT SYSDATETIME(),
+            Detalle NVARCHAR(MAX) NULL
+        )
+        """
+    )
+
+
+def _ensure_non_cyclic_support_fks(cursor):
+    """
+    Conecta tablas de soporte a Certificados (topología estrella) sin ciclos:
+    - AuditoriaCertificados -> Certificados
+    - Inscripciones -> Certificados
+    """
+    cursor.execute(
+        """
+        IF EXISTS (SELECT 1 FROM sys.foreign_keys WHERE name = N'FK_Auditoria_Certificado')
+            RETURN;
+        IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = N'AuditoriaCertificados')
+            RETURN;
+        ALTER TABLE AuditoriaCertificados
+        ADD CONSTRAINT FK_Auditoria_Certificado
+        FOREIGN KEY (IdCertificado) REFERENCES Certificados(IdCertificado)
+        """
+    )
+    cursor.execute(
+        """
+        IF EXISTS (SELECT 1 FROM sys.foreign_keys WHERE name = N'FK_Inscripciones_Certificado')
+            RETURN;
+        IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = N'Inscripciones')
+            RETURN;
+        IF NOT EXISTS (
+            SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID(N'Inscripciones') AND name = N'IdCertificado'
+        )
+            RETURN;
+        ALTER TABLE Inscripciones
+        ADD CONSTRAINT FK_Inscripciones_Certificado
+        FOREIGN KEY (IdCertificado) REFERENCES Certificados(IdCertificado)
+        """
+    )
+
+
+def _ensure_foreign_keys_certificados(cursor):
+    if not _table_exists(cursor, "Certificados"):
+        return
+
+    def add_fk(nombre, sql):
+        cursor.execute(
+            "SELECT 1 FROM sys.foreign_keys WHERE name = ?",
+            (nombre,),
+        )
+        if cursor.fetchone():
+            return
+        try:
+            cursor.execute(sql)
+        except Exception as e:
+            print(f"No se pudo crear FK {nombre}: {e}")
+
+    add_fk(
+        "FK_Certificados_Cursos",
+        """
+        ALTER TABLE Certificados ADD CONSTRAINT FK_Certificados_Cursos
+        FOREIGN KEY (IdCurso) REFERENCES Cursos(IdCurso)
+        """,
+    )
+    add_fk(
+        "FK_Certificados_TipoCredencial",
+        """
+        ALTER TABLE Certificados ADD CONSTRAINT FK_Certificados_TipoCredencial
+        FOREIGN KEY (IdTipoCredencial) REFERENCES TiposCredencial(IdTipoCredencial)
+        """,
+    )
+    add_fk(
+        "FK_Certificados_UsuarioDestinatario",
+        """
+        ALTER TABLE Certificados ADD CONSTRAINT FK_Certificados_UsuarioDestinatario
+        FOREIGN KEY (IdUsuarioDestinatario) REFERENCES Usuarios(IdUsuario)
+        """,
+    )
+
+
+def _ensure_foreign_keys_estadisticas(cursor):
+    if not _table_exists(cursor, "EstadisticasAplicacion") or not _table_exists(cursor, "Certificados"):
+        return
+    cursor.execute(
+        """
+        IF EXISTS (SELECT 1 FROM sys.foreign_keys WHERE name = N'FK_Estadisticas_UltimoCertificado')
+            RETURN;
+        IF NOT EXISTS (
+            SELECT 1 FROM sys.columns
+            WHERE object_id = OBJECT_ID(N'EstadisticasAplicacion') AND name = N'IdUltimoCertificadoGenerado'
+        )
+            RETURN;
+        ALTER TABLE EstadisticasAplicacion
+        ADD CONSTRAINT FK_Estadisticas_UltimoCertificado
+        FOREIGN KEY (IdUltimoCertificadoGenerado) REFERENCES Certificados(IdCertificado)
+        """
+    )
+
+
+def _drop_unnecessary_foreign_keys(cursor):
+    """
+    Elimina FKs que generan recorridos cíclicos en el diagrama.
+    Auditoría mantiene referencias lógicas (IdCertificado/IdUsuario) sin acoplar por FK.
+    """
+    cursor.execute(
+        """
+        IF EXISTS (SELECT 1 FROM sys.foreign_keys WHERE name = N'FK_Certificados_UsuarioCreador')
+        ALTER TABLE Certificados DROP CONSTRAINT FK_Certificados_UsuarioCreador
+        """
+    )
+    cursor.execute(
+        """
+        IF EXISTS (SELECT 1 FROM sys.foreign_keys WHERE name = N'FK_Auditoria_Certificado')
+        ALTER TABLE AuditoriaCertificados DROP CONSTRAINT FK_Auditoria_Certificado
+        """
+    )
+    cursor.execute(
+        """
+        IF EXISTS (SELECT 1 FROM sys.foreign_keys WHERE name = N'FK_Auditoria_Usuario')
+        ALTER TABLE AuditoriaCertificados DROP CONSTRAINT FK_Auditoria_Usuario
+        """
+    )
+    cursor.execute(
+        """
+        IF EXISTS (SELECT 1 FROM sys.foreign_keys WHERE name = N'FK_Inscripciones_Usuario')
+        ALTER TABLE Inscripciones DROP CONSTRAINT FK_Inscripciones_Usuario
+        """
+    )
+    cursor.execute(
+        """
+        IF EXISTS (SELECT 1 FROM sys.foreign_keys WHERE name = N'FK_Inscripciones_Curso')
+        ALTER TABLE Inscripciones DROP CONSTRAINT FK_Inscripciones_Curso
+        """
+    )
+
+
+def _ensure_estadisticas_row(cursor):
+    if not _table_exists(cursor, "EstadisticasAplicacion"):
+        return
+    cursor.execute(
+        """
+        IF NOT EXISTS (SELECT 1 FROM EstadisticasAplicacion WHERE IdEstadistica = 1)
+        INSERT INTO EstadisticasAplicacion (IdEstadistica) VALUES (1)
+        """
+    )
+
+
+def _remove_default_tipos_credencial(cursor):
+    nombres_default = (
+        "Certificado de Aprobación",
+        "Certificado de Participación",
+        "Constancia de Asistencia",
+        "Diploma de Extensión Universitaria",
+    )
+    for nombre in nombres_default:
+        cursor.execute(
+            """
+            DELETE t
+            FROM TiposCredencial t
+            WHERE t.Nombre = ?
+            AND NOT EXISTS (
+                SELECT 1
+                FROM Certificados c
+                WHERE c.IdTipoCredencial = t.IdTipoCredencial
+            )
+            """,
+            (nombre,),
+        )
+
+
+def _backfill_id_tipo_credencial(cursor):
+    if not _table_exists(cursor, "Certificados") or not _table_exists(cursor, "TiposCredencial"):
+        return
+    if not _column_exists(cursor, "Certificados", "NombreTipoCredencial"):
+        return
+    cursor.execute(
+        """
+        UPDATE c
+        SET c.IdTipoCredencial = t.IdTipoCredencial
+        FROM Certificados c
+        INNER JOIN TiposCredencial t ON t.Nombre = c.NombreTipoCredencial
+        WHERE c.IdTipoCredencial IS NULL AND c.NombreTipoCredencial IS NOT NULL
+        """
+    )
+
+
+def _seed_estadisticas_row(cursor):
+    if not _table_exists(cursor, "EstadisticasAplicacion"):
+        return
+    cursor.execute(
+        """
+        IF NOT EXISTS (SELECT 1 FROM EstadisticasAplicacion WHERE IdEstadistica = 1)
+        INSERT INTO EstadisticasAplicacion (IdEstadistica) VALUES (1)
+        """
+    )
+
+
+def get_app_stats():
+    """Lee agregados de métricas (fila única IdEstadistica=1). Devuelve dict o None."""
+    conn = get_db_connection()
+    if not conn:
+        return None
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT TiempoTotalGeneracionSeg, CantidadGeneraciones,
+                TiempoTotalVerificacionSeg, CantidadVerificaciones,
+                CantidadValidas, CantidadInvalidas
+            FROM EstadisticasAplicacion WHERE IdEstadistica = 1
+            """
+        )
+        row = cursor.fetchone()
+        if not row:
+            return None
+        return {
+            "totalGenTime": float(row.TiempoTotalGeneracionSeg),
+            "genCount": int(row.CantidadGeneraciones),
+            "totalVerTime": float(row.TiempoTotalVerificacionSeg),
+            "verCount": int(row.CantidadVerificaciones),
+            "validCount": int(row.CantidadValidas),
+            "invalidCount": int(row.CantidadInvalidas),
+        }
+    except Exception:
+        return None
+    finally:
+        conn.close()
+
+
+def save_app_stats(stats):
+    """Persiste stats_tesis en SQL Server."""
+    conn = get_db_connection()
+    if not conn:
+        return False
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            UPDATE EstadisticasAplicacion SET
+                TiempoTotalGeneracionSeg = ?, CantidadGeneraciones = ?,
+                TiempoTotalVerificacionSeg = ?, CantidadVerificaciones = ?,
+                CantidadValidas = ?, CantidadInvalidas = ?
+            WHERE IdEstadistica = 1
+            """,
+            (
+                stats["totalGenTime"],
+                stats["genCount"],
+                stats["totalVerTime"],
+                stats["verCount"],
+                stats["validCount"],
+                stats["invalidCount"],
+            ),
+        )
+        conn.commit()
+        return True
+    except Exception as e:
+        print(f"Error al guardar estadísticas: {e}")
+        return False
+    finally:
+        conn.close()
+
+
+def obtener_id_tipo_credencial_por_nombre(nombre: str):
+    """Devuelve IdTipoCredencial activo o None."""
+    nombre = (nombre or "").strip()
+    if not nombre:
+        return None
+    conn = get_db_connection()
+    if not conn:
+        return None
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT IdTipoCredencial FROM TiposCredencial
+            WHERE Nombre = ? AND Activo = 1
+            """,
+            (nombre,),
+        )
+        row = cursor.fetchone()
+        return int(row.IdTipoCredencial) if row else None
+    except Exception:
+        return None
+    finally:
+        conn.close()
+
+
+def registrar_auditoria_certificado(id_certificado, accion, id_usuario=None, detalle=None):
+    """Registra un evento en AuditoriaCertificados (no interrumpe si falla)."""
+    conn = get_db_connection()
+    if not conn:
+        return
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            INSERT INTO AuditoriaCertificados (IdCertificado, Accion, IdUsuario, Detalle)
+            VALUES (?, ?, ?, ?)
+            """,
+            (id_certificado, accion, id_usuario, detalle),
+        )
+        conn.commit()
+    except Exception as e:
+        print(f"Auditoría no registrada: {e}")
+    finally:
+        conn.close()
+
+
+def init_db():
+    """Crea o migra el esquema en español (tablas normalizadas)."""
+    conn = get_db_connection()
+    if not conn:
+        return
+    try:
+        cursor = conn.cursor()
+        _ensure_tipos_credencial(cursor)
+        _ensure_cursos(cursor)
+        _ensure_usuarios(cursor)
+        _ensure_estadisticas(cursor)
+        _ensure_certificados(cursor)
+        _ensure_inscripciones(cursor)
+        _ensure_auditoria(cursor)
+        _remove_default_tipos_credencial(cursor)
+        _backfill_id_tipo_credencial(cursor)
+        _seed_estadisticas_row(cursor)
+        _ensure_foreign_keys_certificados(cursor)
+        _ensure_foreign_keys_estadisticas(cursor)
+        _drop_unnecessary_foreign_keys(cursor)
+        _ensure_non_cyclic_support_fks(cursor)
+        conn.commit()
+        print(
+            "Esquema verificado: TiposCredencial, Cursos, Usuarios, EstadisticasAplicacion, "
+            "Certificados, Inscripciones, AuditoriaCertificados."
+        )
+    except Exception as e:
+        print(f"Error al crear o migrar tablas: {e}")
+        conn.rollback()
+    finally:
+        conn.close()

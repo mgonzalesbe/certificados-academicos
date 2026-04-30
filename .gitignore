@@ -1,0 +1,7 @@
+# Clave privada del emisor (generada en primer arranque)
+modelo/issuer_private_key.pem
+.env
+.venv/
+
+# PDFs emitidos (opcional: descomente si no desea versionar certificados generados)
+almacenamiento/certificados/*.pdf
