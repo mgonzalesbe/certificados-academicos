@@ -5,16 +5,23 @@ import pyodbc
 # CONFIGURACIÓN DE BASE DE DATOS (SQL Server)
 # ==========================================================================
 _DRIVER = os.environ.get("DB_DRIVER", "ODBC Driver 17 for SQL Server")
-_SERVER = os.environ.get("DB_SERVER", "DESKTOP-B8EBRI2")
+_SERVER = os.environ.get("DB_SERVER", "servidor-martin.database.windows.net")
 _DATABASE = os.environ.get("DB_NAME", "CertificadosDB")
-_TRUSTED = os.environ.get("DB_TRUSTED", "yes").lower() in ("1", "true", "yes", "y")
+_PORT = os.environ.get("DB_PORT", "1433")
+_TRUSTED = os.environ.get("DB_TRUSTED", "no").lower() in ("1", "true", "yes", "y")
+_ENCRYPT = os.environ.get("DB_ENCRYPT", "yes").lower() in ("1", "true", "yes", "y")
+_TRUST_SERVER_CERT = os.environ.get("DB_TRUST_SERVER_CERTIFICATE", "no").lower() in ("1", "true", "yes", "y")
+_CONNECTION_TIMEOUT = int(os.environ.get("DB_CONNECTION_TIMEOUT", "30"))
 
 
 def _build_connection_string():
     parts = [
         f"DRIVER={{{_DRIVER}}};",
-        f"SERVER={_SERVER};",
+        f"SERVER={_SERVER},{_PORT};",
         f"DATABASE={_DATABASE};",
+        f"Encrypt={'yes' if _ENCRYPT else 'no'};",
+        f"TrustServerCertificate={'yes' if _TRUST_SERVER_CERT else 'no'};",
+        f"Connection Timeout={_CONNECTION_TIMEOUT};",
     ]
     if _TRUSTED:
         parts.append("Trusted_Connection=yes;")

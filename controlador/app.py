@@ -671,8 +671,9 @@ if __name__ == '__main__':
     auth_usuarios.asegurar_admin_por_defecto()
     certificado.init_stats_from_db()
 
-    _debug = os.environ.get('FLASK_DEBUG', 'true').lower() in ('1', 'true', 'yes', 'y')
+    _debug = os.environ.get('FLASK_DEBUG', 'false').lower() in ('1', 'true', 'yes', 'y')
     _port = int(os.environ.get('PORT', '5000'))
+    _host = os.environ.get('FLASK_HOST', '0.0.0.0')
 
     print("\n" + "=" * 60)
     print("🚀 SISTEMA DE CERTIFICADOS — panel admin / alumno")
@@ -680,4 +681,4 @@ if __name__ == '__main__':
     print("   Usuario inicial: admin  (defina ADMIN_DEFAULT_PASSWORD o use Admin123!)")
     print("=" * 60 + "\n")
 
-    app.run(debug=_debug, port=_port, host='127.0.0.1')
+    app.run(debug=_debug, port=_port, host=_host)

@@ -1,17 +1,21 @@
 import os
-import smtplib
+import base64
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.mime.base import MIMEBase
 from email import encoders
 
+from google.auth.transport.requests import Request
+from google.oauth2.credentials import Credentials
+from googleapiclient.discovery import build
+
 # Seguridad: nunca exponer credenciales en codigo fuente.
-# Configure estas variables en su entorno local/servidor.
-ENV_SMTP_HOST = "SMTP_HOST"
-ENV_SMTP_PORT = "SMTP_PORT"
-ENV_SMTP_USER = "SMTP_USER"
-ENV_SMTP_PASSWORD = "SMTP_PASSWORD"
-ENV_MAIL_FROM = "MAIL_FROM"
+# Configure estas variables en su entorno local/servidor (Render).
+ENV_GMAIL_CLIENT_ID = "GMAIL_CLIENT_ID"
+ENV_GMAIL_CLIENT_SECRET = "GMAIL_CLIENT_SECRET"
+ENV_GMAIL_REFRESH_TOKEN = "GMAIL_REFRESH_TOKEN"
+ENV_GMAIL_SENDER = "GMAIL_SENDER"
+GMAIL_SCOPE = "https://www.googleapis.com/auth/gmail.send"
 
 
 def _required_env(var_name: str) -> str:
@@ -21,21 +25,44 @@ def _required_env(var_name: str) -> str:
     return value
 
 
-def _smtp_settings():
-    host = _required_env(ENV_SMTP_HOST)
-    port = int(os.environ.get(ENV_SMTP_PORT, "587"))
-    user = _required_env(ENV_SMTP_USER)
-    password = _required_env(ENV_SMTP_PASSWORD)
-    use_tls = True
-    mail_from = _required_env(ENV_MAIL_FROM)
-    return host, port, user, password, use_tls, mail_from
+def _gmail_settings():
+    client_id = _required_env(ENV_GMAIL_CLIENT_ID)
+    client_secret = _required_env(ENV_GMAIL_CLIENT_SECRET)
+    refresh_token = _required_env(ENV_GMAIL_REFRESH_TOKEN)
+    sender = _required_env(ENV_GMAIL_SENDER)
+    return client_id, client_secret, refresh_token, sender
+
+
+def _gmail_service():
+    client_id, client_secret, refresh_token, _sender = _gmail_settings()
+    creds = Credentials(
+        token=None,
+        refresh_token=refresh_token,
+        token_uri="https://oauth2.googleapis.com/token",
+        client_id=client_id,
+        client_secret=client_secret,
+        scopes=[GMAIL_SCOPE],
+    )
+    creds.refresh(Request())
+    return build("gmail", "v1", credentials=creds, cache_discovery=False)
+
+
+def _send_via_gmail_api(msg: MIMEMultipart) -> bool:
+    try:
+        service = _gmail_service()
+        raw = base64.urlsafe_b64encode(msg.as_bytes()).decode("utf-8")
+        service.users().messages().send(userId="me", body={"raw": raw}).execute()
+        return True
+    except Exception as e:
+        print(f"Error Gmail API enviando correo: {e}")
+        return False
 
 
 def correo_habilitado():
     if os.environ.get("MAIL_ENABLED", "true").lower() in ("0", "false", "no", "n"):
         return False
     try:
-        _smtp_settings()
+        _gmail_settings()
         return True
     except Exception:
         return False
@@ -58,7 +85,7 @@ def enviar_correo_certificado_asignado(
     Usa SIEMPRE la cuenta unica configurada por variables SMTP_* y MAIL_FROM.
     """
     try:
-        host, port, user, password, use_tls, mail_from = _smtp_settings()
+        _, _, _, mail_from = _gmail_settings()
     except Exception as e:
         print(f"Correo no enviado: {e}")
         return False
@@ -117,16 +144,7 @@ def enviar_correo_certificado_asignado(
         )
         msg.attach(part)
 
-    try:
-        with smtplib.SMTP(host, port, timeout=30) as server:
-            if use_tls:
-                server.starttls()
-            server.login(user, password)
-            server.sendmail(mail_from, [destinatario], msg.as_string())
-        return True
-    except Exception as e:
-        print(f"Error SMTP enviando correo a {destinatario}: {e}")
-        return False
+    return _send_via_gmail_api(msg)
 
 
 def enviar_correo_credenciales_registro(
@@ -141,7 +159,7 @@ def enviar_correo_credenciales_registro(
     Nota: se envía la contraseña en texto plano por requerimiento funcional.
     """
     try:
-        host, port, user, password_smtp, use_tls, mail_from = _smtp_settings()
+        _, _, _, mail_from = _gmail_settings()
     except Exception as e:
         print(f"Correo de credenciales no enviado: {e}")
         return False
@@ -190,13 +208,4 @@ def enviar_correo_credenciales_registro(
     msg_alt.attach(MIMEText(html_body, "html", "utf-8"))
     msg.attach(msg_alt)
 
-    try:
-        with smtplib.SMTP(host, port, timeout=30) as server:
-            if use_tls:
-                server.starttls()
-            server.login(user, password_smtp)
-            server.sendmail(mail_from, [destinatario], msg.as_string())
-        return True
-    except Exception as e:
-        print(f"Error SMTP enviando credenciales a {destinatario}: {e}")
-        return False
+    return _send_via_gmail_api(msg)
