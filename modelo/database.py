@@ -366,6 +366,8 @@ def _migrate_certificados_columns(cursor):
         cursor.execute("ALTER TABLE Certificados ADD TiempoVerificacionSeg FLOAT NULL")
     if not _column_exists(cursor, "Certificados", "EsValido"):
         cursor.execute("ALTER TABLE Certificados ADD EsValido BIT NULL")
+    if not _column_exists(cursor, "Certificados", "IdCentroEducativo"):
+        cursor.execute("ALTER TABLE Certificados ADD IdCentroEducativo INT NULL")
 
 
 def _create_certificados_fresh(cursor):
@@ -388,7 +390,8 @@ def _create_certificados_fresh(cursor):
             FechaCreacion DATETIME2 NOT NULL DEFAULT SYSDATETIME(),
             TiempoGeneracionSeg FLOAT NULL,
             TiempoVerificacionSeg FLOAT NULL,
-            EsValido BIT NULL
+            EsValido BIT NULL,
+            IdCentroEducativo INT NULL
         )
         """
     )
@@ -417,25 +420,62 @@ def _ensure_certificados(cursor):
         CREATE NONCLUSTERED INDEX IX_Certificados_IdTipoCredencial ON Certificados(IdTipoCredencial)
         """
     )
+    cursor.execute(
+        """
+        IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'IX_Certificados_IdCentroEducativo' AND object_id = OBJECT_ID(N'Certificados'))
+        CREATE NONCLUSTERED INDEX IX_Certificados_IdCentroEducativo ON Certificados(IdCentroEducativo)
+        """
+    )
 
 
-def _ensure_inscripciones(cursor):
-    if not _table_exists(cursor, "Inscripciones"):
+def _ensure_centro_educativo(cursor):
+    if not _table_exists(cursor, "CentroEducativo"):
         cursor.execute(
             """
-            CREATE TABLE Inscripciones (
-                IdInscripcion INT IDENTITY(1,1) NOT NULL PRIMARY KEY,
-                IdUsuario INT NOT NULL,
-                IdCurso INT NOT NULL,
-                IdCertificado VARCHAR(50) NULL,
-                FechaInscripcion DATETIME2 NOT NULL DEFAULT SYSDATETIME(),
-                Estado NVARCHAR(20) NOT NULL DEFAULT N'Activa',
-                CONSTRAINT UX_Inscripciones_Usuario_Curso UNIQUE (IdUsuario, IdCurso)
+            CREATE TABLE CentroEducativo (
+                IdCentroEducativo INT IDENTITY(1,1) NOT NULL PRIMARY KEY,
+                Logo VARBINARY(MAX) NULL,
+                Nombre NVARCHAR(200) NOT NULL,
+                Estado NVARCHAR(20) NOT NULL DEFAULT N'Activo',
+                CONSTRAINT CK_CentroEducativo_Estado CHECK (Estado IN (N'Activo', N'Inactivo')),
+                CONSTRAINT UX_CentroEducativo_Nombre UNIQUE (Nombre)
             )
             """
         )
-    elif not _column_exists(cursor, "Inscripciones", "IdCertificado"):
-        cursor.execute("ALTER TABLE Inscripciones ADD IdCertificado VARCHAR(50) NULL")
+
+
+def _seed_centro_educativo_default(cursor):
+    if not _table_exists(cursor, "CentroEducativo"):
+        return
+    cursor.execute("SELECT COUNT(*) FROM CentroEducativo")
+    row = cursor.fetchone()
+    n = int(row[0]) if row is not None else 0
+    if n > 0:
+        return
+    cursor.execute(
+        """
+        INSERT INTO CentroEducativo (Logo, Nombre, Estado)
+        VALUES (NULL, N'Institución predeterminada', N'Activo')
+        """
+    )
+
+
+def _drop_inscripciones_legacy(cursor):
+    if not _table_exists(cursor, "Inscripciones"):
+        return
+    cursor.execute(
+        """
+        SELECT name FROM sys.foreign_keys
+        WHERE parent_object_id = OBJECT_ID(N'Inscripciones')
+        """
+    )
+    fk_rows = cursor.fetchall()
+    for fk_row in fk_rows:
+        fk_name = fk_row.name if hasattr(fk_row, "name") else fk_row[0]
+        cursor.execute(
+            f"ALTER TABLE Inscripciones DROP CONSTRAINT {_quote_ident(fk_name)}"
+        )
+    cursor.execute("DROP TABLE Inscripciones")
 
 
 def _ensure_auditoria(cursor):
@@ -459,7 +499,6 @@ def _ensure_non_cyclic_support_fks(cursor):
     """
     Conecta tablas de soporte a Certificados (topología estrella) sin ciclos:
     - AuditoriaCertificados -> Certificados
-    - Inscripciones -> Certificados
     """
     cursor.execute(
         """
@@ -469,21 +508,6 @@ def _ensure_non_cyclic_support_fks(cursor):
             RETURN;
         ALTER TABLE AuditoriaCertificados
         ADD CONSTRAINT FK_Auditoria_Certificado
-        FOREIGN KEY (IdCertificado) REFERENCES Certificados(IdCertificado)
-        """
-    )
-    cursor.execute(
-        """
-        IF EXISTS (SELECT 1 FROM sys.foreign_keys WHERE name = N'FK_Inscripciones_Certificado')
-            RETURN;
-        IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = N'Inscripciones')
-            RETURN;
-        IF NOT EXISTS (
-            SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID(N'Inscripciones') AND name = N'IdCertificado'
-        )
-            RETURN;
-        ALTER TABLE Inscripciones
-        ADD CONSTRAINT FK_Inscripciones_Certificado
         FOREIGN KEY (IdCertificado) REFERENCES Certificados(IdCertificado)
         """
     )
@@ -524,6 +548,13 @@ def _ensure_foreign_keys_certificados(cursor):
         """
         ALTER TABLE Certificados ADD CONSTRAINT FK_Certificados_UsuarioDestinatario
         FOREIGN KEY (IdUsuarioDestinatario) REFERENCES Usuarios(IdUsuario)
+        """,
+    )
+    add_fk(
+        "FK_Certificados_CentroEducativo",
+        """
+        ALTER TABLE Certificados ADD CONSTRAINT FK_Certificados_CentroEducativo
+        FOREIGN KEY (IdCentroEducativo) REFERENCES CentroEducativo(IdCentroEducativo)
         """,
     )
 
@@ -568,18 +599,6 @@ def _drop_unnecessary_foreign_keys(cursor):
         """
         IF EXISTS (SELECT 1 FROM sys.foreign_keys WHERE name = N'FK_Auditoria_Usuario')
         ALTER TABLE AuditoriaCertificados DROP CONSTRAINT FK_Auditoria_Usuario
-        """
-    )
-    cursor.execute(
-        """
-        IF EXISTS (SELECT 1 FROM sys.foreign_keys WHERE name = N'FK_Inscripciones_Usuario')
-        ALTER TABLE Inscripciones DROP CONSTRAINT FK_Inscripciones_Usuario
-        """
-    )
-    cursor.execute(
-        """
-        IF EXISTS (SELECT 1 FROM sys.foreign_keys WHERE name = N'FK_Inscripciones_Curso')
-        ALTER TABLE Inscripciones DROP CONSTRAINT FK_Inscripciones_Curso
         """
     )
 
@@ -768,7 +787,9 @@ def init_db():
         _ensure_usuarios(cursor)
         _ensure_estadisticas(cursor)
         _ensure_certificados(cursor)
-        _ensure_inscripciones(cursor)
+        _ensure_centro_educativo(cursor)
+        _seed_centro_educativo_default(cursor)
+        _drop_inscripciones_legacy(cursor)
         _ensure_auditoria(cursor)
         _remove_default_tipos_credencial(cursor)
         _backfill_id_tipo_credencial(cursor)
@@ -780,7 +801,7 @@ def init_db():
         conn.commit()
         print(
             "Esquema verificado: TiposCredencial, Cursos, Usuarios, EstadisticasAplicacion, "
-            "Certificados, Inscripciones, AuditoriaCertificados."
+            "Certificados, CentroEducativo, AuditoriaCertificados."
         )
     except Exception as e:
         print(f"Error al crear o migrar tablas: {e}")

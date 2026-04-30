@@ -205,6 +205,28 @@ def validar_datos_generacion(datos):
         finally:
             conn.close()
 
+    if datos.get("centro_educativo_id") in (None, ""):
+        raise ValueError("Debe indicar el centro educativo (centro_educativo_id)")
+    try:
+        id_ce = int(datos.get("centro_educativo_id"))
+        if id_ce < 1:
+            raise ValueError()
+    except Exception:
+        raise ValueError("«centro_educativo_id» debe ser un entero positivo") from None
+    conn = get_db_connection()
+    if not conn:
+        raise RuntimeError("Base de datos no disponible")
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT 1 FROM CentroEducativo WHERE IdCentroEducativo = ? AND Estado = N'Activo'",
+            (id_ce,),
+        )
+        if cursor.fetchone() is None:
+            raise ValueError("Centro educativo no válido o inactivo")
+    finally:
+        conn.close()
+
 
 stats_tesis = {
     'totalGenTime': 0.0, 'genCount': 0,
@@ -307,6 +329,7 @@ def crear_certificado(datos_estudiante, created_by_user_id=None):
     created_by = int(created_by_user_id) if created_by_user_id else None
     id_curso = int(datos_estudiante["course_id"]) if datos_estudiante.get("course_id") not in (None, "") else None
     id_tipo_credencial = int(datos_estudiante["type_id"]) if datos_estudiante.get("type_id") not in (None, "") else None
+    id_centro_educativo = int(datos_estudiante["centro_educativo_id"])
 
     # Resolver nombres finales (para PDF/firma) desde BD si hay IDs
     curso_nombre = (datos_estudiante.get("course") or "").strip() or None
@@ -388,9 +411,9 @@ def crear_certificado(datos_estudiante, created_by_user_id=None):
                 IdCertificado, NombreEstudiante, IdCurso, FechaEmision,
                 IdTipoCredencial, FirmaDigital, Estado, ContenidoPdf,
                 IdUsuarioDestinatario, IdUsuarioCreador, HorasFormacion, MesesFormacion, TextoCuerpo,
-                TiempoGeneracionSeg
+                TiempoGeneracionSeg, IdCentroEducativo
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             cert_id,
             datos_estudiante['name'],
@@ -406,6 +429,7 @@ def crear_certificado(datos_estudiante, created_by_user_id=None):
             training_months_db,
             body_text,
             tgc,
+            id_centro_educativo,
         ))
         cursor.execute(
             """

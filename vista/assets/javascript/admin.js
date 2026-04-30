@@ -155,6 +155,7 @@ const navBtns = document.querySelectorAll(".nav-btn");
 const interfaces = document.querySelectorAll(".interface");
 const courseSelect = document.getElementById("input-course-id");
 const typeSelect = document.getElementById("input-type");
+const centroSelect = document.getElementById("input-centro-id");
 
 navBtns.forEach((btn) => {
   btn.addEventListener("click", () => {
@@ -175,6 +176,11 @@ navBtns.forEach((btn) => {
       loadCertificatesData();
       loadStatistics();
       loadDashboardInsights();
+    }
+    if (targetId === "create") {
+      loadCoursesIntoSelect().catch(() => {});
+      loadTypesIntoSelect().catch(() => {});
+      loadCentrosIntoSelect().catch(() => {});
     }
     if (targetId === "catalogs") loadCatalogs();
   });
@@ -603,16 +609,33 @@ async function loadTypesIntoSelect() {
   });
 }
 
+async function loadCentrosIntoSelect() {
+  if (!centroSelect) return;
+  centroSelect.innerHTML = `<option value="">Cargando centros...</option>`;
+  const data = await fetchJson("/api/admin/centros-educativos");
+  const rows = (data.centers || []).filter((c) => c.active);
+  centroSelect.innerHTML = `<option value="">Seleccione un centro...</option>`;
+  rows.forEach((c) => {
+    const opt = document.createElement("option");
+    opt.value = String(c.id);
+    opt.textContent = c.name;
+    centroSelect.appendChild(opt);
+  });
+}
+
 async function loadCatalogs() {
   const coursesBody = document.getElementById("table-courses");
   const typesBody = document.getElementById("table-ctypes");
+  const centrosBody = document.getElementById("table-centros");
   if (!coursesBody || !typesBody) {
     await loadCoursesIntoSelect().catch(() => {});
     await loadTypesIntoSelect().catch(() => {});
+    await loadCentrosIntoSelect().catch(() => {});
     return;
   }
   const courses = (await fetchJson("/api/admin/courses")).courses || [];
   const types = (await fetchJson("/api/admin/credential-types")).types || [];
+  const centros = (await fetchJson("/api/admin/centros-educativos")).centers || [];
 
   coursesBody.replaceChildren();
   courses.forEach((c) => {
@@ -668,20 +691,62 @@ async function loadCatalogs() {
     typesBody.appendChild(tr);
   });
 
+  if (centrosBody) {
+    centrosBody.replaceChildren();
+    centros.forEach((c) => {
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td class="px-4 py-3 text-sm font-semibold">${c.name}</td>
+        <td class="px-4 py-3 text-center text-sm">${c.hasLogo ? "Sí" : "No"}</td>
+        <td class="px-4 py-3 text-center text-sm">${c.active ? "Sí" : "No"}</td>
+        <td class="px-4 py-3 text-center text-sm"></td>
+      `;
+      const actionsTd = tr.lastElementChild;
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = c.active
+        ? "px-3 py-1 rounded-lg font-semibold text-white bg-red-600 hover:bg-red-700"
+        : "px-3 py-1 rounded-lg font-semibold text-white bg-green-600 hover:bg-green-700";
+      btn.textContent = c.active ? "Deshabilitar" : "Habilitar";
+      btn.addEventListener("click", () =>
+        changeCatalogStatus({
+          kind: "centro",
+          id: c.id,
+          name: c.name,
+          currentActive: c.active,
+        }),
+      );
+      actionsTd.appendChild(btn);
+      centrosBody.appendChild(tr);
+    });
+  }
+
   await loadCoursesIntoSelect();
   await loadTypesIntoSelect();
+  await loadCentrosIntoSelect();
 }
 
 async function changeCatalogStatus({ kind, id, name, currentActive }) {
   const nextActive = !currentActive;
-  const entityLabel = kind === "course" ? "curso" : "tipo de credencial";
+  const entityLabel =
+    kind === "course"
+      ? "curso"
+      : kind === "centro"
+        ? "centro educativo"
+        : "tipo de credencial";
   const actionLabel = nextActive ? "habilitar" : "deshabilitar";
   const endpoint =
     kind === "course"
       ? `/api/admin/courses/${id}/active`
-      : `/api/admin/credential-types/${id}/active`;
+      : kind === "centro"
+        ? `/api/admin/centros-educativos/${id}/active`
+        : `/api/admin/credential-types/${id}/active`;
   const msgEl = document.getElementById(
-    kind === "course" ? "courses-msg" : "ctypes-msg",
+    kind === "course"
+      ? "courses-msg"
+      : kind === "centro"
+        ? "centros-msg"
+        : "ctypes-msg",
   );
 
   const accepted = await ModalUtil.show(
@@ -800,6 +865,7 @@ document.getElementById("form-create").addEventListener("submit", async (e) => {
   };
   payload.course_id = document.getElementById("input-course-id").value;
   payload.type_id = document.getElementById("input-type").value;
+  payload.centro_educativo_id = document.getElementById("input-centro-id").value;
   if (includeMonths)
     payload.months = document.getElementById("input-months").value;
   if (bodyTxt) payload.body_text = bodyTxt;
@@ -1143,6 +1209,51 @@ if (ctypeForm) {
       });
       setMsg(msg, true, "Tipo de credencial agregado correctamente.");
       e.target.reset();
+      await loadCatalogs();
+    } catch (err) {
+      setMsg(msg, false, err.message || "Error");
+    }
+  });
+}
+
+const centroForm = document.getElementById("form-new-centro");
+if (centroForm) {
+  centroForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const msg = document.getElementById("centros-msg");
+    msg.classList.add("hidden");
+    const payload = {
+      name: document.getElementById("centro-name").value.trim(),
+      estado: document.getElementById("centro-estado").value,
+    };
+    const fileInput = document.getElementById("centro-logo");
+    const file = fileInput && fileInput.files && fileInput.files[0];
+    if (file) {
+      if (file.size > 5 * 1024 * 1024) {
+        setMsg(msg, false, "El logo no puede superar 5 MB.");
+        return;
+      }
+      const b64 = await new Promise((resolve, reject) => {
+        const r = new FileReader();
+        r.onload = () => {
+          const s = String(r.result || "");
+          const i = s.indexOf(",");
+          resolve(i >= 0 ? s.slice(i + 1) : s);
+        };
+        r.onerror = () => reject(new Error("No se pudo leer el archivo"));
+        r.readAsDataURL(file);
+      });
+      payload.logo_base64 = b64;
+    }
+    try {
+      await fetchJson("/api/admin/centros-educativos", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      setMsg(msg, true, "Centro educativo agregado correctamente.");
+      e.target.reset();
+      document.getElementById("centro-estado").value = "Activo";
       await loadCatalogs();
     } catch (err) {
       setMsg(msg, false, err.message || "Error");

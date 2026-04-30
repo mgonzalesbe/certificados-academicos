@@ -2,6 +2,7 @@ import sys
 import os
 import re
 import time
+import base64
 from collections import defaultdict
 from functools import wraps
 
@@ -490,6 +491,114 @@ def admin_create_credential_type():
         conn.commit()
         return jsonify({"success": True})
     except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 400
+    finally:
+        conn.close()
+
+
+@app.route('/api/admin/centros-educativos', methods=['GET'])
+@login_required_api
+@admin_required_api
+def admin_list_centros_educativos():
+    conn = get_db_connection()
+    if not conn:
+        return jsonify({"success": False, "error": "Base de datos no disponible"}), 503
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT IdCentroEducativo, Nombre, Estado,
+                   CASE WHEN Logo IS NOT NULL AND DATALENGTH(Logo) > 0 THEN 1 ELSE 0 END AS HasLogo
+            FROM CentroEducativo
+            ORDER BY Nombre ASC
+            """
+        )
+        rows = []
+        for row in cursor.fetchall():
+            rows.append({
+                "id": int(row.IdCentroEducativo),
+                "name": row.Nombre,
+                "active": (row.Estado or "").strip().lower() == "activo",
+                "hasLogo": bool(getattr(row, "HasLogo", 0)),
+            })
+        return jsonify({"success": True, "centers": rows})
+    finally:
+        conn.close()
+
+
+@app.route('/api/admin/centros-educativos', methods=['POST'])
+@login_required_api
+@admin_required_api
+def admin_create_centro_educativo():
+    datos = request.get_json(silent=True) or {}
+    name = (datos.get("name") or "").strip()
+    if not name:
+        return jsonify({"success": False, "error": "El nombre del centro es obligatorio"}), 400
+    if len(name) > 200:
+        return jsonify({"success": False, "error": "El nombre no puede superar 200 caracteres"}), 400
+    estado = (datos.get("estado") or "Activo").strip()
+    if estado not in ("Activo", "Inactivo"):
+        return jsonify({"success": False, "error": "Estado debe ser Activo o Inactivo"}), 400
+    logo_bin = None
+    b64 = datos.get("logo_base64")
+    if b64:
+        try:
+            logo_bin = base64.b64decode(str(b64).strip())
+        except Exception:
+            return jsonify({"success": False, "error": "logo_base64 no es Base64 válido"}), 400
+        if len(logo_bin) > 5 * 1024 * 1024:
+            return jsonify({"success": False, "error": "El logo no puede superar 5 MB"}), 400
+
+    conn = get_db_connection()
+    if not conn:
+        return jsonify({"success": False, "error": "Base de datos no disponible"}), 503
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            INSERT INTO CentroEducativo (Logo, Nombre, Estado)
+            VALUES (?, ?, ?)
+            """,
+            (logo_bin, name, estado),
+        )
+        conn.commit()
+        return jsonify({"success": True})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 400
+    finally:
+        conn.close()
+
+
+@app.route('/api/admin/centros-educativos/<int:centro_id>/active', methods=['PATCH'])
+@login_required_api
+@admin_required_api
+def admin_update_centro_educativo_active(centro_id: int):
+    datos = request.get_json(silent=True) or {}
+    active = datos.get("active")
+    if not isinstance(active, bool):
+        return jsonify({"success": False, "error": "El campo 'active' debe ser booleano"}), 400
+    nuevo_estado = "Activo" if active else "Inactivo"
+
+    conn = get_db_connection()
+    if not conn:
+        return jsonify({"success": False, "error": "Base de datos no disponible"}), 503
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            UPDATE CentroEducativo
+            SET Estado = ?
+            WHERE IdCentroEducativo = ?
+            """,
+            (nuevo_estado, centro_id),
+        )
+        if cursor.rowcount == 0:
+            conn.rollback()
+            return jsonify({"success": False, "error": "Centro educativo no encontrado"}), 404
+        conn.commit()
+        return jsonify({"success": True})
+    except Exception as e:
+        conn.rollback()
         return jsonify({"success": False, "error": str(e)}), 400
     finally:
         conn.close()
