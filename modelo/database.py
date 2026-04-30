@@ -1,5 +1,8 @@
 import os
+from types import SimpleNamespace
+
 import pyodbc
+import pymssql
 
 # ==========================================================================
 # CONFIGURACIÓN DE BASE DE DATOS (SQL Server)
@@ -35,12 +38,90 @@ def _build_connection_string():
 DB_CONNECTION_STRING = _build_connection_string()
 
 
+def _adapt_params_for_pymssql(query, params):
+    if params is None:
+        return query, ()
+    if isinstance(params, tuple):
+        values = params
+    elif isinstance(params, list):
+        values = tuple(params)
+    else:
+        values = (params,)
+    return query.replace("?", "%s"), values
+
+
+class _PymssqlCursorAdapter:
+    def __init__(self, raw_cursor):
+        self._raw = raw_cursor
+        self._last_columns = []
+
+    @property
+    def rowcount(self):
+        return self._raw.rowcount
+
+    def execute(self, query, params=None):
+        q, p = _adapt_params_for_pymssql(query, params)
+        self._raw.execute(q, p)
+        self._last_columns = [col[0] for col in (self._raw.description or [])]
+        return self
+
+    def fetchone(self):
+        row = self._raw.fetchone()
+        if row is None:
+            return None
+        return self._to_row(row)
+
+    def fetchall(self):
+        rows = self._raw.fetchall()
+        return [self._to_row(r) for r in rows]
+
+    def _to_row(self, row):
+        if isinstance(row, dict):
+            return SimpleNamespace(**row)
+        if not self._last_columns:
+            return row
+        data = {self._last_columns[i]: row[i] for i in range(min(len(row), len(self._last_columns)))}
+        return SimpleNamespace(**data)
+
+    def __getattr__(self, name):
+        return getattr(self._raw, name)
+
+
+class _PymssqlConnectionAdapter:
+    def __init__(self, raw_conn):
+        self._raw = raw_conn
+
+    def cursor(self):
+        return _PymssqlCursorAdapter(self._raw.cursor())
+
+    def __getattr__(self, name):
+        return getattr(self._raw, name)
+
+
 def get_db_connection():
     """Establece y devuelve la conexión a la base de datos."""
     try:
         conn = pyodbc.connect(DB_CONNECTION_STRING)
         return conn
     except Exception as e:
+        err = str(e)
+        if "Can't open lib" in err or "SQLDriverConnect" in err:
+            try:
+                # Fallback útil para Render cuando no está instalado msodbcsql18.
+                conn = pymssql.connect(
+                    server=_SERVER,
+                    user=os.environ.get("DB_USER", ""),
+                    password=os.environ.get("DB_PASSWORD", ""),
+                    database=_DATABASE,
+                    port=int(_PORT),
+                    login_timeout=_CONNECTION_TIMEOUT,
+                    timeout=_CONNECTION_TIMEOUT,
+                )
+                print("Conexión SQL Server establecida con fallback pymssql.")
+                return _PymssqlConnectionAdapter(conn)
+            except Exception as e2:
+                print(f"ADVERTENCIA: Falló pyodbc y también pymssql. Error pyodbc: {e}; error pymssql: {e2}")
+                return None
         print(f"ADVERTENCIA: No se pudo conectar a SQL Server. Error: {e}")
         return None
 
