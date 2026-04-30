@@ -2,6 +2,8 @@
 modelo/issuer_private_key.pem
 .env
 .venv/
+__pycache__/
+*.pyc
 
 # PDFs emitidos (opcional: descomente si no desea versionar certificados generados)
 almacenamiento/certificados/*.pdf
