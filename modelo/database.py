@@ -38,6 +38,14 @@ def _build_connection_string():
 DB_CONNECTION_STRING = _build_connection_string()
 
 
+class _AttrRow(SimpleNamespace):
+    """Fila compatible con acceso por atributo y por índice (row[0])."""
+
+    def __getitem__(self, idx):
+        values = list(self.__dict__.values())
+        return values[idx]
+
+
 def _adapt_params_for_pymssql(query, params):
     if params is None:
         return query, ()
@@ -77,11 +85,11 @@ class _PymssqlCursorAdapter:
 
     def _to_row(self, row):
         if isinstance(row, dict):
-            return SimpleNamespace(**row)
+            return _AttrRow(**row)
         if not self._last_columns:
             return row
         data = {self._last_columns[i]: row[i] for i in range(min(len(row), len(self._last_columns)))}
-        return SimpleNamespace(**data)
+        return _AttrRow(**data)
 
     def __getattr__(self, name):
         return getattr(self._raw, name)
