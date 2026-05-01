@@ -1,9 +1,7 @@
 import sys
 import os
 import re
-import time
 import base64
-from collections import defaultdict
 from functools import wraps
 
 from io import BytesIO
@@ -47,25 +45,33 @@ CERT_ID_RE = re.compile(
     r'^UCV-[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
 )
 
-# Límite de registros de alumno por IP (anti-abuso)
-_REGISTER_WINDOW_SEC = 3600
-_REGISTER_MAX_PER_WINDOW = 5
-_register_attempts = defaultdict(list)
-
-
-def _client_ip():
-    return request.headers.get("X-Forwarded-For", request.remote_addr or "").split(",")[0].strip() or "0.0.0.0"
-
-
-def _register_rate_ok():
-    ip = _client_ip()
-    now = time.time()
-    bucket = _register_attempts[ip]
-    bucket[:] = [t for t in bucket if now - t < _REGISTER_WINDOW_SEC]
-    if len(bucket) >= _REGISTER_MAX_PER_WINDOW:
-        return False
-    bucket.append(now)
-    return True
+# --- Límite de intentos de registro (alumno) por IP — DESACTIVADO por ahora ---
+# Antes: ventana de 1 h, máx. 5 registros por IP (`_REGISTER_*`, `_register_attempts`,
+# `_client_ip`, `_register_rate_ok`). Para reactivar: descomentar el bloque siguiente,
+# restaurar `import time` y `from collections import defaultdict`, y descomentar
+# el `if not _register_rate_ok()` dentro de `auth_register` (más abajo).
+#
+# import time
+# from collections import defaultdict
+#
+# _REGISTER_WINDOW_SEC = 3600
+# _REGISTER_MAX_PER_WINDOW = 5
+# _register_attempts = defaultdict(list)
+#
+#
+# def _client_ip():
+#     return request.headers.get("X-Forwarded-For", request.remote_addr or "").split(",")[0].strip() or "0.0.0.0"
+#
+#
+# def _register_rate_ok():
+#     ip = _client_ip()
+#     now = time.time()
+#     bucket = _register_attempts[ip]
+#     bucket[:] = [t for t in bucket if now - t < _REGISTER_WINDOW_SEC]
+#     if len(bucket) >= _REGISTER_MAX_PER_WINDOW:
+#         return False
+#     bucket.append(now)
+#     return True
 
 
 def login_required_api(f):
@@ -147,6 +153,12 @@ def auth_login():
 @app.route('/api/auth/register', methods=['POST'])
 def auth_register():
     datos = request.get_json(silent=True) or {}
+    # Límite por IP desactivado: ver comentario al inicio del archivo (rate limit registro).
+    # if not _register_rate_ok():
+    #     return jsonify({
+    #         'success': False,
+    #         'error': 'Demasiados registros desde esta red. Intente más tarde.',
+    #     }), 429
     username = (datos.get('username') or '').strip()
     email = (datos.get('email') or '').strip()
     password = datos.get('password') or ''
