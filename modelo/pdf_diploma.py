@@ -206,8 +206,9 @@ def generar_pdf_diploma(
 ):
     """
     Diploma horizontal: plantilla de página (env o PNG/JPG en assets), cabecera con logos,
-    títulos, cuerpo, firma y QR. Sin plantilla solo se deja el fondo blanco (el marco va en la imagen).
+    títulos, cuerpo opcional, firma y QR. Sin plantilla solo se deja el fondo blanco (el marco va en la imagen).
     El logo izquierdo es el archivo estático regional (assets).
+    Si ``texto_cuerpo`` está vacío, no se dibuja párrafo de cuerpo (el redactor define el inicio al escribir).
     """
     w, h = landscape(A4)
     c = canvas.Canvas(dest, pagesize=(w, h))
@@ -243,21 +244,15 @@ def generar_pdf_diploma(
 
     y -= 0.42 * cm
 
-    # Cuerpo (cursiva Times, centrado — mismo estilo que «Otorgado a :»)
+    # Cuerpo (cursiva Times, centrado — solo si el usuario o catálogo aportan texto)
     if texto_cuerpo and texto_cuerpo.strip():
         body = texto_cuerpo.strip()
-    else:
-        body = (
-            f"Por haber culminado satisfactoriamente el programa «{curso}» "
-            f"en la modalidad «{tipo_credencial}», conforme a los requisitos académicos establecidos."
-        )
-
-    body_size = FONT_BODY_SIZE
-    leading = body_size * FONT_BODY_LEADING_MULT
-    c.setFont(FONT_SERIF_ITALIC, body_size)
-    c.setFillColor(colors.black)
-    y = _wrap_centered_lines(c, body, cx, y, inner_w, FONT_SERIF_ITALIC, body_size, leading)
-    y -= 0.48 * cm
+        body_size = FONT_BODY_SIZE
+        leading = body_size * FONT_BODY_LEADING_MULT
+        c.setFont(FONT_SERIF_ITALIC, body_size)
+        c.setFillColor(colors.black)
+        y = _wrap_centered_lines(c, body, cx, y, inner_w, FONT_SERIF_ITALIC, body_size, leading)
+        y -= 0.48 * cm
 
     # --- Firma central (imagen + Dr./Dra. + cargo fijo) ---
     # Un poco más arriba para dejar sitio al QR centrado bajo el cargo

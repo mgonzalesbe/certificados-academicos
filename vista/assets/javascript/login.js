@@ -105,8 +105,6 @@ document
     });
     const data = await r.json().catch(() => ({}));
     if (!r.ok) {
-      // Antes: mensaje extra si r.status === 429 (límite por IP en registro). Ese límite está
-      // desactivado en controlador/app.py; si se reactiva el backend, puede volver el branch 429.
       showMsg(data.error || "No se pudo registrar", false);
       return;
     }
