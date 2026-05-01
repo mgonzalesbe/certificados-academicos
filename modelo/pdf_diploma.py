@@ -2,7 +2,6 @@
 
 import io
 import os
-from datetime import datetime
 
 import qrcode
 from reportlab.lib import colors
@@ -11,10 +10,23 @@ from reportlab.lib.units import cm
 from reportlab.lib.utils import ImageReader
 from reportlab.pdfgen import canvas
 
-# Estilo documento formal (marco dorado / negro / gris)
-FRAME_GOLD = colors.Color(0.62, 0.48, 0.18)
 MUTED = colors.Color(0.35, 0.35, 0.37)
-CORNER_GRAY = colors.Color(0.72, 0.72, 0.74)
+
+# Tipografía alineada al diploma de referencia (Helvetica ≈ Arial; Times-Italic ≈ Times New Roman cursiva)
+FONT_SANS_BOLD = "Helvetica-Bold"
+FONT_SANS = "Helvetica"
+FONT_SERIF_ITALIC = "Times-Italic"
+# «HOSPITAL DISTRITAL DE LAREDO» y «RECONOCIMIENTO»: mismo tamaño (Helvetica-Bold)
+FONT_HEADER_LINE_PT = 23.0
+FONT_HEADER_LINE_MIN = 16.0
+FONT_OTORGADO_SIZE = 13.5
+FONT_NAME_SIZE = 22.0
+FONT_NAME_MIN = 17.0
+FONT_BODY_SIZE = 16.8
+FONT_BODY_LEADING_MULT = 1.5
+FONT_META_SIZE = 9.5
+FONT_FIRMANTE_SIZE = 9.8
+FONT_CARGO_SIZE = 9.8
 
 _ASSETS_DIR = os.path.normpath(
     os.path.join(os.path.dirname(__file__), "..", "vista", "assets", "imagenes", "certificados")
@@ -29,12 +41,42 @@ def _asset_path(*candidates: str) -> str | None:
     return None
 
 
-def _format_display_date(iso_date: str) -> str:
-    try:
-        d = datetime.strptime(iso_date[:10], "%Y-%m-%d")
-        return d.strftime("%d/%m/%Y")
-    except Exception:
-        return iso_date or ""
+def _open_plantilla_reader(plantilla_fondo_bytes: bytes | None) -> ImageReader | None:
+    """Imagen de página completa (PNG/JPEG). Sin transparencia forzada: use el archivo tal cual."""
+    if plantilla_fondo_bytes:
+        try:
+            return ImageReader(io.BytesIO(plantilla_fondo_bytes))
+        except Exception:
+            return None
+    path = (os.environ.get("CERT_PDF_PLANTILLA_FONDO") or "").strip().strip('"')
+    if path and os.path.isfile(path):
+        try:
+            return ImageReader(path)
+        except Exception:
+            return None
+    for name in (
+        "fondo_certificado.png",
+        "plantilla_certificado.png",
+        "fondo_certificado.jpg",
+        "plantilla_certificado.jpg",
+    ):
+        p = os.path.join(_ASSETS_DIR, name)
+        if os.path.isfile(p):
+            try:
+                return ImageReader(p)
+            except Exception:
+                return None
+    return None
+
+
+def _draw_background_cover(c, w: float, h: float, ir: ImageReader):
+    """Escala la plantilla para cubrir toda la página (tipo «cover»), centrada."""
+    iw, ih = ir.getSize()
+    sc = max(w / float(iw), h / float(ih))
+    sw, sh = iw * sc, ih * sc
+    x = (w - sw) / 2.0
+    y = (h - sh) / 2.0
+    c.drawImage(ir, x, y, width=sw, height=sh, mask="auto")
 
 
 def _wrap_centered_lines(
@@ -59,53 +101,6 @@ def _wrap_centered_lines(
     return y
 
 
-def _draw_ornate_double_frame(c, w: float, h: float):
-    """Marco doble con esquinas decorativas (aprox. al diploma de referencia)."""
-    m_out = 0.55 * cm
-    gap_gold = 0.32 * cm
-    gap_inner = 0.22 * cm
-    x0, y0 = m_out, m_out
-    x1, y1 = w - m_out, h - m_out
-
-    c.setStrokeColor(colors.black)
-    c.setLineWidth(1.0)
-    c.rect(x0, y0, x1 - x0, y1 - y0, fill=0, stroke=1)
-
-    xi0 = x0 + gap_gold
-    yi0 = y0 + gap_gold
-    xi1 = x1 - gap_gold
-    yi1 = y1 - gap_gold
-    c.setStrokeColor(FRAME_GOLD)
-    c.setLineWidth(2.2)
-    c.rect(xi0, yi0, xi1 - xi0, yi1 - yi0, fill=0, stroke=1)
-
-    xj0 = xi0 + gap_inner
-    yj0 = yi0 + gap_inner
-    xj1 = xi1 - gap_inner
-    yj1 = yi1 - gap_inner
-    c.setStrokeColor(colors.black)
-    c.setLineWidth(0.45)
-    c.rect(xj0, yj0, xj1 - xj0, yj1 - yj0, fill=0, stroke=1)
-
-    # Ornamentos en esquinas (trazos tipo filigrana simplificada)
-    L = 0.95 * cm
-    tick = 0.28 * cm
-    c.setStrokeColor(CORNER_GRAY)
-    c.setLineWidth(0.55)
-    corners = [
-        (xj0, yj0, 1, 1),
-        (xj1, yj0, -1, 1),
-        (xj0, yj1, 1, -1),
-        (xj1, yj1, -1, -1),
-    ]
-    for bx, by, sx, sy in corners:
-        ax = bx + sx * L
-        ay = by + sy * L
-        c.line(bx, by, ax, by)
-        c.line(bx, by, bx, ay)
-        c.line(bx + sx * tick, by + sy * tick, bx + sx * (L - tick), by + sy * (L - tick))
-
-
 def _draw_scaled_image(c, ir: ImageReader, cx: float, top_y: float, max_w: float, max_h: float, anchor: str):
     """anchor: 'left' (borde izquierdo en cx) o 'right' (borde derecho en cx)."""
     iw, ih = ir.getSize()
@@ -120,6 +115,79 @@ def _draw_scaled_image(c, ir: ImageReader, cx: float, top_y: float, max_w: float
     return top_y - sh - 0.15 * cm
 
 
+def _draw_certificate_header(
+    c,
+    w: float,
+    h: float,
+    margin_x: float,
+    inner_w: float,
+    cx: float,
+    logo_derecho_bytes: bytes | None,
+) -> float:
+    """
+    Logos superior izquierdo (regional, assets) y derecho (universidad, bytes): mismo tamaño máximo,
+    misma altura (y_header_top) y misma separación respecto al borde interior (espejo).
+    Devuelve la coordenada Y (baseline) debajo del bloque de títulos.
+    """
+    y_header_top = h - 1.55 * cm
+    y_below_logos = y_header_top
+    # Mismo tope para ambos logos (simetría). Variables de entorno con prefijo REGIONAL por compatibilidad.
+    logo_max_w = float(os.environ.get("CERT_PDF_LOGO_REGIONAL_MAX_W_CM", "4.95")) * cm
+    logo_max_h = float(os.environ.get("CERT_PDF_LOGO_REGIONAL_MAX_H_CM", "3.5")) * cm
+    # Misma distancia del borde interior: izquierda desde margin_x, derecha desde w - margin_x
+    logo_inset_x = float(os.environ.get("CERT_PDF_LOGO_REGIONAL_OFFSET_X_CM", "3.8")) * cm
+    left_x = margin_x + logo_inset_x
+    right_x = w - margin_x - logo_inset_x
+
+    left_path = _asset_path(
+        "logo_gobierno_regional.png",
+        "logo_regional.png",
+        "logo_izquierda.png",
+        "logo_gobierno.png",
+        "logo.png",
+    )
+    if left_path:
+        try:
+            left_ir = ImageReader(left_path)
+            y_below_logos = min(
+                y_below_logos,
+                _draw_scaled_image(c, left_ir, left_x, y_header_top, logo_max_w, logo_max_h, "left"),
+            )
+        except Exception:
+            pass
+
+    if logo_derecho_bytes:
+        try:
+            right_ir = ImageReader(io.BytesIO(logo_derecho_bytes))
+            y_below_logos = min(
+                y_below_logos,
+                _draw_scaled_image(c, right_ir, right_x, y_header_top, logo_max_w, logo_max_h, "right"),
+            )
+        except Exception:
+            pass
+
+    # Baja el bloque de títulos y todo lo que sigue (Hospital / Reconocimiento / cuerpo…)
+    title_block_drop = float(os.environ.get("CERT_PDF_TITLE_BLOCK_DROP_CM", "1.55")) * cm
+    y = y_below_logos - 0.28 * cm - title_block_drop
+
+    inst = "HOSPITAL DISTRITAL DE LAREDO"
+    titulo = "RECONOCIMIENTO"
+    c.setFillColor(colors.black)
+    fs = FONT_HEADER_LINE_PT
+    while fs >= FONT_HEADER_LINE_MIN and (
+        c.stringWidth(inst, FONT_SANS_BOLD, fs) > inner_w
+        or c.stringWidth(titulo, FONT_SANS_BOLD, fs) > inner_w
+    ):
+        fs -= 0.5
+    c.setFont(FONT_SANS_BOLD, fs)
+    c.drawCentredString(cx, y, inst)
+    y -= max(0.55 * cm, fs * 1.22)
+    c.drawCentredString(cx, y, titulo)
+    y -= max(0.55 * cm, fs * 1.18)
+    y -= 0.42 * cm
+    return y
+
+
 def generar_pdf_diploma(
     dest,
     cert_id: str,
@@ -128,7 +196,6 @@ def generar_pdf_diploma(
     fecha_emision: str,
     tipo_credencial: str,
     qr_payload: str,
-    horas: int = 120,
     texto_cuerpo: str | None = None,
     incluir_meses: bool = False,
     meses: int | None = None,
@@ -138,113 +205,48 @@ def generar_pdf_diploma(
     doctor_firma_bytes: bytes | None = None,
     doctor_nombres: str | None = None,
     doctor_genero: str | None = None,
+    plantilla_fondo_bytes: bytes | None = None,
 ):
     """
-    Diploma horizontal estilo «reconocimiento»: logos superior, textos institucionales
-    fijos (Hospital Distrital de Laredo / Reconocimiento), «Otorgado a», cuerpo, firma
-    manuscrita del director (tabla FirmaDoctores) y QR.
-
-    Logos: izquierda desde centro (Logo); derecha desde LogoDerecho del centro o assets.
+    Diploma horizontal: plantilla de página (env o PNG/JPG en assets), cabecera con logos,
+    títulos, cuerpo, firma y QR. Sin plantilla solo se deja el fondo blanco (el marco va en la imagen).
+    `logo_centro_bytes` se ignora: el logo izquierdo es el archivo estático regional.
     """
     w, h = landscape(A4)
     c = canvas.Canvas(dest, pagesize=(w, h))
 
-    c.setFillColor(colors.white)
-    c.rect(0, 0, w, h, fill=1, stroke=0)
-    _draw_ornate_double_frame(c, w, h)
-
-    margin_x = 1.85 * cm
+    margin_x = float(os.environ.get("CERT_PDF_MARGIN_X_CM", "2.35")) * cm
     inner_w = w - 2 * margin_x
     cx = w / 2
 
-    # --- Logos superiores (izq. / der.) ---
-    y_header_top = h - 1.55 * cm
-    y_below_logos = y_header_top
+    plantilla_ir = _open_plantilla_reader(plantilla_fondo_bytes)
 
-    max_logo_w, max_logo_h = 4.2 * cm, 3.0 * cm
-    left_x = margin_x
-    right_x = w - margin_x
+    c.setFillColor(colors.white)
+    c.rect(0, 0, w, h, fill=1, stroke=0)
 
-    left_ir = None
-    if logo_centro_bytes:
-        try:
-            left_ir = ImageReader(io.BytesIO(logo_centro_bytes))
-        except Exception:
-            left_ir = None
-    if left_ir is None:
-        lp = _asset_path(
-            "logo_regional.png",
-            "logo_izquierda.png",
-            "logo_gobierno.png",
-            "logo.png",
-        )
-        if lp:
-            left_ir = ImageReader(lp)
-    if left_ir:
-        y_below_logos = min(
-            y_below_logos,
-            _draw_scaled_image(c, left_ir, left_x, y_header_top, max_logo_w, max_logo_h, "left"),
-        )
+    if plantilla_ir:
+        _draw_background_cover(c, w, h, plantilla_ir)
 
-    right_ir = None
-    if logo_derecho_bytes:
-        try:
-            right_ir = ImageReader(io.BytesIO(logo_derecho_bytes))
-        except Exception:
-            right_ir = None
-    if right_ir is None:
-        right_path = _asset_path(
-            "logo_secundario.png",
-            "logo_upao.png",
-            "logo_derecha.png",
-            "logo_institucion.png",
-        )
-        if right_path:
-            right_ir = ImageReader(right_path)
-    if right_ir:
-        y_below_logos = min(
-            y_below_logos,
-            _draw_scaled_image(c, right_ir, right_x, y_header_top, max_logo_w, max_logo_h, "right"),
-        )
-
-    y = y_below_logos - 0.35 * cm
-
-    inst = "HOSPITAL DISTRITAL DE LAREDO"
-    c.setFillColor(colors.black)
-    c.setFont("Helvetica-Bold", 10.5)
-    fs = 10.5
-    while fs >= 8 and c.stringWidth(inst, "Helvetica-Bold", fs) > inner_w:
-        fs -= 0.5
-    c.setFont("Helvetica-Bold", fs)
-    c.drawCentredString(cx, y, inst)
-    y -= 0.85 * cm
-
-    titulo = "RECONOCIMIENTO"
-    titulo_size = 22
-    c.setFont("Helvetica-Bold", titulo_size)
-    title_leading = titulo_size * 1.15
-    c.drawCentredString(cx, y, titulo)
-    y -= title_leading
-    y -= 0.35 * cm
+    y = _draw_certificate_header(c, w, h, margin_x, inner_w, cx, logo_derecho_bytes)
 
     c.setFillColor(colors.black)
-    c.setFont("Times-Italic", 12)
-    c.drawString(margin_x, y, "Otorgado a:")
-    y -= 0.75 * cm
+    c.setFont(FONT_SERIF_ITALIC, FONT_OTORGADO_SIZE)
+    c.drawString(margin_x, y, "Otorgado a :")
+    y -= 0.58 * cm
 
     # Nombre del beneficiario
     nombre_clean = (nombre or "").strip().upper()
-    name_size = 20
-    c.setFont("Helvetica-Bold", name_size)
-    while name_size >= 14 and c.stringWidth(nombre_clean, "Helvetica-Bold", name_size) > inner_w:
+    name_size = FONT_NAME_SIZE
+    c.setFont(FONT_SANS_BOLD, name_size)
+    while name_size >= FONT_NAME_MIN and c.stringWidth(nombre_clean, FONT_SANS_BOLD, name_size) > inner_w:
         name_size -= 0.5
-    c.setFont("Helvetica-Bold", name_size)
+    c.setFont(FONT_SANS_BOLD, name_size)
     c.drawCentredString(cx, y, nombre_clean)
-    y -= name_size * 1.25
+    y -= name_size * 1.2
 
-    y -= 0.35 * cm
+    y -= 0.42 * cm
 
-    # Cuerpo (cursiva, centrado)
+    # Cuerpo (cursiva Times, centrado — mismo estilo que «Otorgado a :»)
     if texto_cuerpo and texto_cuerpo.strip():
         body = texto_cuerpo.strip()
     else:
@@ -253,26 +255,23 @@ def generar_pdf_diploma(
             f"en la modalidad «{tipo_credencial}», conforme a los requisitos académicos establecidos."
         )
 
-    body_size = 11
-    leading = body_size * 1.35
-    c.setFont("Times-Italic", body_size)
+    body_size = FONT_BODY_SIZE
+    leading = body_size * FONT_BODY_LEADING_MULT
+    c.setFont(FONT_SERIF_ITALIC, body_size)
     c.setFillColor(colors.black)
-    y = _wrap_centered_lines(c, body, cx, y, inner_w, "Times-Italic", body_size, leading)
-    y -= 0.45 * cm
+    y = _wrap_centered_lines(c, body, cx, y, inner_w, FONT_SERIF_ITALIC, body_size, leading)
+    y -= 0.48 * cm
 
-    # Metadatos discretos (horas / meses / fecha)
-    c.setFont("Helvetica", 8)
-    c.setFillColor(MUTED)
-    meta_parts = [f"Fecha de emisión: {_format_display_date(fecha_emision)}"]
-    if horas and horas > 0:
-        meta_parts.append(f"Carga horaria referencial: {horas} h")
+    # Sin línea «Fecha de emisión» en el PDF (solicitud explícita). Opcional: solo meses si aplica.
     if incluir_meses and meses is not None:
-        meta_parts.append(f"Duración referencial: {meses} mes(es)")
-    c.drawCentredString(cx, y, "   ·   ".join(meta_parts))
-    y -= 0.65 * cm
+        c.setFont(FONT_SANS, FONT_META_SIZE)
+        c.setFillColor(colors.black)
+        c.drawCentredString(cx, y, f"Duración referencial: {meses} mes(es)")
+        y -= 0.55 * cm
 
     # --- Firma central (imagen + Dr./Dra. + cargo fijo) ---
-    line_y = 2.85 * cm
+    # Un poco más arriba para dejar sitio al QR centrado bajo el cargo
+    line_y = float(os.environ.get("CERT_PDF_PLANTILLA_LINEA_FIRMA_CM", "3.05")) * cm
     line_half = 4.2 * cm
     max_sig_w, max_sig_h = 4.8 * cm, 2.1 * cm
     if doctor_firma_bytes:
@@ -298,39 +297,35 @@ def generar_pdf_diploma(
 
     gen = (doctor_genero or "").strip()
     pref = "Dr. " if gen == "Masculino" else "Dra. " if gen == "Femenino" else ""
-    nom_doc = (doctor_nombres or "").strip()
+    nom_doc = (doctor_nombres or "").strip().upper()
     firmante_line = (pref + nom_doc).strip() or (os.environ.get("CERT_FIRMANTE_NOMBRE") or "").strip()
     if firmante_line:
-        c.setFont("Helvetica", 9.5)
+        c.setFont(FONT_SANS, FONT_FIRMANTE_SIZE)
         c.setFillColor(colors.black)
-        c.drawCentredString(cx, line_y - 0.42 * cm, firmante_line)
-    c.setFont("Helvetica-Bold", 8.5)
-    c.drawCentredString(cx, line_y - 0.82 * cm, "DIRECTOR DEL HOSPITAL DISTRITAL DE LAREDO")
+        c.drawCentredString(cx, line_y - 0.4 * cm, firmante_line)
+    c.setFont(FONT_SANS_BOLD, FONT_CARGO_SIZE)
+    c.setFillColor(colors.black)
+    cargo_baseline = line_y - 0.78 * cm
+    c.drawCentredString(cx, cargo_baseline, "DIRECTOR DEL HOSPITAL DISTRITAL DE LAREDO")
 
-    # --- QR verificación (esquina inferior derecha) ---
-    qr = qrcode.QRCode(version=None, box_size=3, border=1)
+    # --- QR centrado debajo del cargo (pequeño; no tapa esquinas del marco) ---
+    qr = qrcode.QRCode(version=None, box_size=1, border=1)
     qr.add_data(qr_payload)
     qr.make(fit=True)
     pil_img = qr.make_image(fill_color="black", back_color="white")
     buf = io.BytesIO()
     pil_img.save(buf, format="PNG")
     buf.seek(0)
-    qr_size = 2.65 * cm
-    qx = w - margin_x - qr_size
-    qy = 1.05 * cm
+    qr_size = float(os.environ.get("CERT_PDF_QR_SIZE_CM", "1.12")) * cm
+    # Espacio bajo la línea de base del cargo (descendentes + separación)
+    drop_below_cargo = 0.45 * cm
+    qy = cargo_baseline - drop_below_cargo - qr_size
+    qx = cx - qr_size / 2.0
     c.setStrokeColor(MUTED)
-    c.setLineWidth(0.5)
-    pad = 0.1 * cm
+    c.setLineWidth(0.35)
+    pad = 0.06 * cm
     c.rect(qx - pad, qy - pad, qr_size + 2 * pad, qr_size + 2 * pad, fill=0, stroke=1)
     c.drawImage(ImageReader(buf), qx, qy, width=qr_size, height=qr_size, mask="auto")
-    c.setFont("Helvetica", 6.5)
-    c.setFillColor(MUTED)
-    c.drawCentredString(qx + qr_size / 2, qy - 0.38 * cm, "Verificación")
-
-    # Identificador breve (pie izquierdo)
-    uid_short = cert_id.replace("UCV-", "")[:16]
-    c.setFont("Helvetica", 7)
-    c.drawString(margin_x, 1.0 * cm, f"Id. documento: {uid_short}")
 
     c.showPage()
     c.save()
@@ -343,7 +338,6 @@ def generar_pdf_diploma_bytes(
     fecha_emision: str,
     tipo_credencial: str,
     qr_payload: str,
-    horas: int = 120,
     texto_cuerpo: str | None = None,
     incluir_meses: bool = False,
     meses: int | None = None,
@@ -353,6 +347,7 @@ def generar_pdf_diploma_bytes(
     doctor_firma_bytes: bytes | None = None,
     doctor_nombres: str | None = None,
     doctor_genero: str | None = None,
+    plantilla_fondo_bytes: bytes | None = None,
 ) -> bytes:
     """Genera el PDF en memoria (para guardar en SQL Server VARBINARY)."""
     buf = io.BytesIO()
@@ -364,7 +359,6 @@ def generar_pdf_diploma_bytes(
         fecha_emision=fecha_emision,
         tipo_credencial=tipo_credencial,
         qr_payload=qr_payload,
-        horas=horas,
         texto_cuerpo=texto_cuerpo,
         incluir_meses=incluir_meses,
         meses=meses,
@@ -373,5 +367,6 @@ def generar_pdf_diploma_bytes(
         doctor_firma_bytes=doctor_firma_bytes,
         doctor_nombres=doctor_nombres,
         doctor_genero=doctor_genero,
+        plantilla_fondo_bytes=plantilla_fondo_bytes,
     )
     return buf.getvalue()

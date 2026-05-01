@@ -183,6 +183,7 @@ navBtns.forEach((btn) => {
       loadTypesIntoSelect().catch(() => {});
       loadCentrosIntoSelect().catch(() => {});
       loadFirmaDoctoresIntoSelect().catch(() => {});
+      loadBodyTextPresetsForEmitForm(null).catch(() => {});
     }
     if (targetId === "catalogs") loadCatalogs();
   });
@@ -639,6 +640,37 @@ async function loadFirmaDoctoresIntoSelect() {
   });
 }
 
+async function loadBodyTextPresetsForEmitForm(presetsFromCatalog) {
+  const sel = document.getElementById("select-body-preset");
+  if (!sel) return;
+  let list = presetsFromCatalog;
+  if (list == null) {
+    try {
+      const data = await fetchJson("/api/admin/body-text-presets");
+      list = data.presets || [];
+    } catch {
+      sel.innerHTML = '<option value="">— Textos guardados no disponibles —</option>';
+      return;
+    }
+  }
+  const active = (list || []).filter((p) => p.active);
+  window.__bodyPresetTextById = {};
+  active.forEach((p) => {
+    window.__bodyPresetTextById[p.id] = p.text || "";
+  });
+  const prev = sel.value;
+  sel.innerHTML = '<option value="">— Escribir manualmente —</option>';
+  active.forEach((p) => {
+    const o = document.createElement("option");
+    o.value = String(p.id);
+    o.textContent = p.name;
+    sel.appendChild(o);
+  });
+  if (prev && window.__bodyPresetTextById[Number(prev)] !== undefined) {
+    sel.value = prev;
+  }
+}
+
 async function loadCatalogs() {
   const coursesBody = document.getElementById("table-courses");
   const typesBody = document.getElementById("table-ctypes");
@@ -648,10 +680,17 @@ async function loadCatalogs() {
     await loadTypesIntoSelect().catch(() => {});
     await loadCentrosIntoSelect().catch(() => {});
     await loadFirmaDoctoresIntoSelect().catch(() => {});
+    await loadBodyTextPresetsForEmitForm(null).catch(() => {});
     return;
   }
   const courses = (await fetchJson("/api/admin/courses")).courses || [];
   const types = (await fetchJson("/api/admin/credential-types")).types || [];
+  let bodyPresets = [];
+  try {
+    bodyPresets = (await fetchJson("/api/admin/body-text-presets")).presets || [];
+  } catch {
+    bodyPresets = [];
+  }
   const centros = (await fetchJson("/api/admin/centros-educativos")).centers || [];
   const doctors = (await fetchJson("/api/admin/firma-doctores")).doctors || [];
 
@@ -708,6 +747,49 @@ async function loadCatalogs() {
     actionsTd.appendChild(btn);
     typesBody.appendChild(tr);
   });
+
+  const presetsBody = document.getElementById("table-body-text-presets");
+  if (presetsBody) {
+    presetsBody.replaceChildren();
+    bodyPresets.forEach((p) => {
+      const tr = document.createElement("tr");
+      const tdName = document.createElement("td");
+      tdName.className = "px-4 py-3 text-sm font-semibold";
+      tdName.textContent = p.name || "";
+      const tdPrev = document.createElement("td");
+      tdPrev.className = "px-4 py-3 text-xs text-gray-600";
+      const full = p.text || "";
+      tdPrev.textContent = full.length > 80 ? `${full.slice(0, 80)}…` : full;
+      const tdAct = document.createElement("td");
+      tdAct.className = "px-4 py-3 text-center text-sm";
+      tdAct.textContent = p.active ? "Sí" : "No";
+      const actionsTd = document.createElement("td");
+      actionsTd.className = "px-4 py-3 text-center text-sm";
+      tr.appendChild(tdName);
+      tr.appendChild(tdPrev);
+      tr.appendChild(tdAct);
+      tr.appendChild(actionsTd);
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = p.active
+        ? "px-3 py-1 rounded-lg font-semibold text-white bg-red-600 hover:bg-red-700"
+        : "px-3 py-1 rounded-lg font-semibold text-white bg-green-600 hover:bg-green-700";
+      btn.textContent = p.active ? "Deshabilitar" : "Habilitar";
+      btn.addEventListener("click", () =>
+        changeCatalogStatus({
+          kind: "body_preset",
+          id: p.id,
+          name: p.name,
+          currentActive: p.active,
+        }),
+      );
+      actionsTd.appendChild(btn);
+      presetsBody.appendChild(tr);
+    });
+  }
+
+
+  await loadBodyTextPresetsForEmitForm(bodyPresets);
 
   if (centrosBody) {
     centrosBody.replaceChildren();
@@ -787,7 +869,9 @@ async function changeCatalogStatus({ kind, id, name, currentActive }) {
         ? "centro educativo"
         : kind === "doctor"
           ? "director"
-          : "tipo de credencial";
+          : kind === "body_preset"
+            ? "texto guardado"
+            : "tipo de credencial";
   const actionLabel = nextActive ? "habilitar" : "deshabilitar";
   const endpoint =
     kind === "course"
@@ -796,7 +880,9 @@ async function changeCatalogStatus({ kind, id, name, currentActive }) {
         ? `/api/admin/centros-educativos/${id}/active`
         : kind === "doctor"
           ? `/api/admin/firma-doctores/${id}/active`
-          : `/api/admin/credential-types/${id}/active`;
+          : kind === "body_preset"
+            ? `/api/admin/body-text-presets/${id}/active`
+            : `/api/admin/credential-types/${id}/active`;
   const msgEl = document.getElementById(
     kind === "course"
       ? "courses-msg"
@@ -804,7 +890,9 @@ async function changeCatalogStatus({ kind, id, name, currentActive }) {
         ? "centros-msg"
         : kind === "doctor"
           ? "firma-doctor-msg"
-          : "ctypes-msg",
+          : kind === "body_preset"
+            ? "body-presets-msg"
+            : "ctypes-msg",
   );
 
   const accepted = await ModalUtil.show(
@@ -917,7 +1005,6 @@ document.getElementById("form-create").addEventListener("submit", async (e) => {
   const payload = {
     name: studentName,
     date: document.getElementById("input-date").value,
-    hours: document.getElementById("input-hours").value,
     recipient_user_id: studentId,
     include_months: includeMonths,
   };
@@ -928,6 +1015,10 @@ document.getElementById("form-create").addEventListener("submit", async (e) => {
   if (includeMonths)
     payload.months = document.getElementById("input-months").value;
   if (bodyTxt) payload.body_text = bodyTxt;
+  const presetSel = document.getElementById("select-body-preset");
+  if (presetSel && presetSel.value) {
+    payload.body_text_catalog_id = presetSel.value;
+  }
 
   try {
     const response = await fetch("/api/generate", {
@@ -960,7 +1051,6 @@ document.getElementById("form-create").addEventListener("submit", async (e) => {
       mailSent,
     );
     e.target.reset();
-    document.getElementById("input-hours").value = "2";
     document.getElementById("input-student-search").value = "";
     document.getElementById("input-student-id").value = "";
     document
@@ -1272,6 +1362,40 @@ if (ctypeForm) {
     } catch (err) {
       setMsg(msg, false, err.message || "Error");
     }
+  });
+}
+
+const bodyPresetForm = document.getElementById("form-new-body-preset");
+if (bodyPresetForm) {
+  bodyPresetForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const msg = document.getElementById("body-presets-msg");
+    msg.classList.add("hidden");
+    const name = document.getElementById("body-preset-name").value.trim();
+    const text = document.getElementById("body-preset-text").value.trim();
+    try {
+      await fetchJson("/api/admin/body-text-presets", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, text }),
+      });
+      setMsg(msg, true, "Texto guardado correctamente.");
+      e.target.reset();
+      await loadCatalogs();
+    } catch (err) {
+      setMsg(msg, false, err.message || "Error");
+    }
+  });
+}
+
+const selectBodyPreset = document.getElementById("select-body-preset");
+if (selectBodyPreset) {
+  selectBodyPreset.addEventListener("change", () => {
+    const id = selectBodyPreset.value;
+    const ta = document.getElementById("input-body");
+    if (!ta || !id) return;
+    const m = window.__bodyPresetTextById || {};
+    if (m[Number(id)] !== undefined) ta.value = m[Number(id)];
   });
 }
 

@@ -192,15 +192,29 @@ def validar_datos_generacion(datos):
     if bt is not None and len(str(bt)) > 4000:
         raise ValueError("El texto del diploma no puede superar 4000 caracteres")
 
-    if datos.get("hours") not in (None, ""):
+    if datos.get("body_text_catalog_id") not in (None, ""):
         try:
-            h = int(datos["hours"])
-            if h < 1 or h > 50000:
+            icat = int(datos.get("body_text_catalog_id"))
+            if icat < 1:
                 raise ValueError()
         except Exception:
-            raise ValueError("«hours» debe ser un entero entre 1 y 50000") from None
-    else:
-        raise ValueError("Debe indicar las horas académicas (o de duración) del certificado")
+            raise ValueError("«body_text_catalog_id» debe ser un entero positivo") from None
+        conn = get_db_connection()
+        if not conn:
+            raise RuntimeError("Base de datos no disponible")
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT 1 FROM TextosCuerpoCertificado
+                WHERE IdTextoCuerpo = ? AND Activo = 1
+                """,
+                (icat,),
+            )
+            if cursor.fetchone() is None:
+                raise ValueError("Texto guardado no válido o inactivo")
+        finally:
+            conn.close()
 
     if datos.get("include_months"):
         try:
@@ -380,10 +394,17 @@ def crear_certificado(datos_estudiante, created_by_user_id=None):
         meses_pdf = int(datos_estudiante.get("months") or 0)
         training_months_db = meses_pdf
 
-    hours = int(datos_estudiante.get("hours") or 1)
     body_text = datos_estudiante.get("body_text")
     if body_text is not None:
         body_text = str(body_text).strip() or None
+
+    id_texto_cuerpo_catalogo = None
+    raw_cat = datos_estudiante.get("body_text_catalog_id")
+    if raw_cat not in (None, ""):
+        try:
+            id_texto_cuerpo_catalogo = int(raw_cat)
+        except (TypeError, ValueError):
+            id_texto_cuerpo_catalogo = None
 
     recipient_id = int(datos_estudiante.get("recipient_user_id")) if datos_estudiante.get("recipient_user_id") else None
     created_by = int(created_by_user_id) if created_by_user_id else None
@@ -395,7 +416,6 @@ def crear_certificado(datos_estudiante, created_by_user_id=None):
     # Resolver nombres finales (para PDF/firma) desde BD si hay IDs
     curso_nombre = (datos_estudiante.get("course") or "").strip() or None
     tipo_nombre = (datos_estudiante.get("type") or "").strip() or None
-    logo_centro_bytes = None
     logo_derecho_bytes = None
     doctor_firma_bytes = None
     doctor_nombres = None
@@ -422,7 +442,7 @@ def crear_certificado(datos_estudiante, created_by_user_id=None):
             tipo_nombre = str(r.Nombre)
         cursor.execute(
             """
-            SELECT Nombre, Logo, LogoDerecho FROM CentroEducativo
+            SELECT Nombre, LogoDerecho FROM CentroEducativo
             WHERE IdCentroEducativo = ? AND Estado = N'Activo'
             """,
             (id_centro_educativo,),
@@ -430,11 +450,6 @@ def crear_certificado(datos_estudiante, created_by_user_id=None):
         cr = cursor.fetchone()
         if not cr:
             raise ValueError("Centro educativo no válido o inactivo")
-        raw_logo = getattr(cr, "Logo", None)
-        if raw_logo is not None:
-            logo_centro_bytes = bytes(raw_logo) if not isinstance(raw_logo, (bytes, bytearray)) else bytes(raw_logo)
-            if len(logo_centro_bytes) == 0:
-                logo_centro_bytes = None
         raw_ld = getattr(cr, "LogoDerecho", None)
         if raw_ld is not None:
             logo_derecho_bytes = bytes(raw_ld) if not isinstance(raw_ld, (bytes, bytearray)) else bytes(raw_ld)
@@ -491,11 +506,10 @@ def crear_certificado(datos_estudiante, created_by_user_id=None):
             fecha_emision=datos_estudiante['date'],
             tipo_credencial=tipo_nombre,
             qr_payload=qr_payload,
-            horas=hours,
             texto_cuerpo=body_text,
             incluir_meses=incluir_meses,
             meses=meses_pdf,
-            logo_centro_bytes=logo_centro_bytes,
+            logo_centro_bytes=None,
             logo_derecho_bytes=logo_derecho_bytes,
             doctor_firma_bytes=doctor_firma_bytes,
             doctor_nombres=doctor_nombres,
@@ -518,8 +532,8 @@ def crear_certificado(datos_estudiante, created_by_user_id=None):
             INSERT INTO Certificados (
                 IdCertificado, NombreEstudiante, IdCurso, FechaEmision,
                 IdTipoCredencial, FirmaDigital, Estado, ContenidoPdf,
-                IdUsuarioDestinatario, IdUsuarioCreador, HorasFormacion, MesesFormacion, TextoCuerpo,
-                TiempoGeneracionSeg, IdCentroEducativo, IdFirmaDoctores
+                IdUsuarioDestinatario, IdUsuarioCreador, MesesFormacion, TextoCuerpo,
+                TiempoGeneracionSeg, IdCentroEducativo, IdFirmaDoctores, IdTextoCuerpoCatalogo
             )
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
@@ -533,12 +547,12 @@ def crear_certificado(datos_estudiante, created_by_user_id=None):
             pdf_bytes,
             recipient_id,
             created_by,
-            hours,
             training_months_db,
             body_text,
             tgc,
             id_centro_educativo,
             id_firma_doctores,
+            id_texto_cuerpo_catalogo,
         ))
         cursor.execute(
             """
@@ -672,7 +686,8 @@ def obtener_todos_los_certificados():
         cursor = conn.cursor()
         cursor.execute("""
             SELECT c.IdCertificado, c.NombreEstudiante, cu.Nombre AS NombreCurso, tc.Nombre AS NombreTipoCredencial, c.FirmaDigital, c.Estado,
-                   IdUsuarioDestinatario, HorasFormacion, MesesFormacion,
+                   c.IdUsuarioDestinatario, c.MesesFormacion,
+                   c.TiempoGeneracionSeg, c.TiempoVerificacionSeg, c.EsValido,
                    CASE WHEN c.ContenidoPdf IS NOT NULL AND DATALENGTH(c.ContenidoPdf) > 0 THEN 1 ELSE 0 END AS HasPdfDb
             FROM Certificados c
             INNER JOIN Cursos cu ON cu.IdCurso = c.IdCurso
@@ -689,7 +704,6 @@ def obtener_todos_los_certificados():
                 "signature": row.FirmaDigital, "qrPayload": qr_payload,
                 "hasPdf": has_pdf,
                 "recipientUserId": int(rid) if rid is not None else None,
-                "hours": getattr(row, "HorasFormacion", None),
                 "months": getattr(row, "MesesFormacion", None),
                 "tgc": getattr(row, "TiempoGeneracionSeg", 0),
                 "tv": getattr(row, "TiempoVerificacionSeg", 0),
@@ -958,7 +972,7 @@ def buscar_certificados(q=None, page=1, page_size=5):
         sql = f"""
             SELECT c.IdCertificado, c.NombreEstudiante, cu.Nombre AS NombreCurso, tc.Nombre AS NombreTipoCredencial,
                    c.FirmaDigital, c.Estado,
-                   c.IdUsuarioDestinatario, c.HorasFormacion, c.MesesFormacion,
+                   c.IdUsuarioDestinatario, c.MesesFormacion,
                    c.TiempoGeneracionSeg, c.TiempoVerificacionSeg, c.EsValido,
                    CASE WHEN c.ContenidoPdf IS NOT NULL AND DATALENGTH(c.ContenidoPdf) > 0 THEN 1 ELSE 0 END AS HasPdfDb
             FROM Certificados c
@@ -980,7 +994,6 @@ def buscar_certificados(q=None, page=1, page_size=5):
                 "signature": row.FirmaDigital, "qrPayload": qr_payload,
                 "hasPdf": has_pdf,
                 "recipientUserId": int(rid) if rid is not None else None,
-                "hours": getattr(row, "HorasFormacion", None),
                 "months": getattr(row, "MesesFormacion", None),
                 "tgc": getattr(row, "TiempoGeneracionSeg", 0),
                 "tv": getattr(row, "TiempoVerificacionSeg", 0),

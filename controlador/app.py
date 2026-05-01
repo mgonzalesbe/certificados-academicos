@@ -497,6 +497,104 @@ def admin_create_credential_type():
         conn.close()
 
 
+@app.route("/api/admin/body-text-presets", methods=["GET"])
+@login_required_api
+@admin_required_api
+def admin_list_body_text_presets():
+    conn = get_db_connection()
+    if not conn:
+        return jsonify({"success": False, "error": "Base de datos no disponible"}), 503
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT IdTextoCuerpo, Nombre, Texto, Activo
+            FROM TextosCuerpoCertificado
+            ORDER BY Nombre ASC
+            """
+        )
+        rows = []
+        for row in cursor.fetchall():
+            rows.append({
+                "id": int(row.IdTextoCuerpo),
+                "name": row.Nombre,
+                "text": row.Texto or "",
+                "active": bool(getattr(row, "Activo", 1)),
+            })
+        return jsonify({"success": True, "presets": rows})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 400
+    finally:
+        conn.close()
+
+
+@app.route("/api/admin/body-text-presets", methods=["POST"])
+@login_required_api
+@admin_required_api
+def admin_create_body_text_preset():
+    datos = request.get_json(silent=True) or {}
+    name = (datos.get("name") or "").strip()
+    text = (datos.get("text") or "").strip()
+    if not name:
+        return jsonify({"success": False, "error": "El nombre es obligatorio"}), 400
+    if not text:
+        return jsonify({"success": False, "error": "El texto es obligatorio"}), 400
+    if len(name) > 200:
+        return jsonify({"success": False, "error": "El nombre no puede superar 200 caracteres"}), 400
+    if len(text) > 4000:
+        return jsonify({"success": False, "error": "El texto no puede superar 4000 caracteres"}), 400
+    conn = get_db_connection()
+    if not conn:
+        return jsonify({"success": False, "error": "Base de datos no disponible"}), 503
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            INSERT INTO TextosCuerpoCertificado (Nombre, Texto, Activo)
+            VALUES (?, ?, 1)
+            """,
+            (name, text),
+        )
+        conn.commit()
+        return jsonify({"success": True})
+    except Exception as e:
+        conn.rollback()
+        return jsonify({"success": False, "error": str(e)}), 400
+    finally:
+        conn.close()
+
+
+@app.route("/api/admin/body-text-presets/<int:preset_id>/active", methods=["PATCH"])
+@login_required_api
+@admin_required_api
+def admin_patch_body_text_preset_active(preset_id: int):
+    datos = request.get_json(silent=True) or {}
+    if "active" not in datos:
+        return jsonify({"success": False, "error": "Indique active (true/false)"}), 400
+    active = bool(datos.get("active"))
+    conn = get_db_connection()
+    if not conn:
+        return jsonify({"success": False, "error": "Base de datos no disponible"}), 503
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            UPDATE TextosCuerpoCertificado SET Activo = ? WHERE IdTextoCuerpo = ?
+            """,
+            (1 if active else 0, preset_id),
+        )
+        if cursor.rowcount == 0:
+            conn.rollback()
+            return jsonify({"success": False, "error": "Texto guardado no encontrado"}), 404
+        conn.commit()
+        return jsonify({"success": True})
+    except Exception as e:
+        conn.rollback()
+        return jsonify({"success": False, "error": str(e)}), 400
+    finally:
+        conn.close()
+
+
 @app.route('/api/admin/centros-educativos', methods=['GET'])
 @login_required_api
 @admin_required_api

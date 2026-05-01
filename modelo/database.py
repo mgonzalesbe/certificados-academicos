@@ -351,7 +351,6 @@ def _migrate_certificados_columns(cursor):
     _rename_if_exists(cursor, "Certificados", "PdfContent", "ContenidoPdf")
     _rename_if_exists(cursor, "Certificados", "RecipientUserId", "IdUsuarioDestinatario")
     _rename_if_exists(cursor, "Certificados", "CreatedByUserId", "IdUsuarioCreador")
-    _rename_if_exists(cursor, "Certificados", "TrainingHours", "HorasFormacion")
     _rename_if_exists(cursor, "Certificados", "TrainingMonths", "MesesFormacion")
     _rename_if_exists(cursor, "Certificados", "BodyText", "TextoCuerpo")
     if not _column_exists(cursor, "Certificados", "IdCurso"):
@@ -370,6 +369,21 @@ def _migrate_certificados_columns(cursor):
         cursor.execute("ALTER TABLE Certificados ADD IdCentroEducativo INT NULL")
     if not _column_exists(cursor, "Certificados", "IdFirmaDoctores"):
         cursor.execute("ALTER TABLE Certificados ADD IdFirmaDoctores INT NULL")
+    if not _column_exists(cursor, "Certificados", "IdTextoCuerpoCatalogo"):
+        cursor.execute("ALTER TABLE Certificados ADD IdTextoCuerpoCatalogo INT NULL")
+    _drop_horas_formacion_columns(cursor)
+
+
+def _drop_horas_formacion_columns(cursor):
+    """Elimina columnas de horas/carga horaria (modelo de certificado actual sin ese dato)."""
+    if not _table_exists(cursor, "Certificados"):
+        return
+    for col in ("HorasFormacion", "TrainingHours"):
+        if _column_exists(cursor, "Certificados", col):
+            try:
+                cursor.execute(f"ALTER TABLE Certificados DROP COLUMN {col}")
+            except Exception as e:
+                print(f"No se pudo eliminar columna Certificados.{col}: {e}")
 
 
 def _create_certificados_fresh(cursor):
@@ -386,7 +400,6 @@ def _create_certificados_fresh(cursor):
             ContenidoPdf VARBINARY(MAX) NULL,
             IdUsuarioDestinatario INT NULL,
             IdUsuarioCreador INT NULL,
-            HorasFormacion INT NULL,
             MesesFormacion INT NULL,
             TextoCuerpo NVARCHAR(MAX) NULL,
             FechaCreacion DATETIME2 NOT NULL DEFAULT SYSDATETIME(),
@@ -394,7 +407,23 @@ def _create_certificados_fresh(cursor):
             TiempoVerificacionSeg FLOAT NULL,
             EsValido BIT NULL,
             IdCentroEducativo INT NULL,
-            IdFirmaDoctores INT NULL
+            IdFirmaDoctores INT NULL,
+            IdTextoCuerpoCatalogo INT NULL
+        )
+        """
+    )
+
+
+def _ensure_textos_cuerpo_catalogo(cursor):
+    if _table_exists(cursor, "TextosCuerpoCertificado"):
+        return
+    cursor.execute(
+        """
+        CREATE TABLE TextosCuerpoCertificado (
+            IdTextoCuerpo INT IDENTITY(1,1) NOT NULL PRIMARY KEY,
+            Nombre NVARCHAR(200) NOT NULL,
+            Texto NVARCHAR(MAX) NOT NULL,
+            Activo BIT NOT NULL DEFAULT 1
         )
         """
     )
@@ -601,6 +630,17 @@ def _ensure_foreign_keys_certificados(cursor):
         FOREIGN KEY (IdFirmaDoctores) REFERENCES FirmaDoctores(IdFirmaDoctores)
         """,
     )
+    if _table_exists(cursor, "TextosCuerpoCertificado") and _column_exists(
+        cursor, "Certificados", "IdTextoCuerpoCatalogo"
+    ):
+        add_fk(
+            "FK_Certificados_TextoCuerpoCatalogo",
+            """
+            ALTER TABLE Certificados ADD CONSTRAINT FK_Certificados_TextoCuerpoCatalogo
+            FOREIGN KEY (IdTextoCuerpoCatalogo) REFERENCES TextosCuerpoCertificado(IdTextoCuerpo)
+            ON DELETE SET NULL
+            """,
+        )
 
 
 def _ensure_foreign_keys_estadisticas(cursor):
@@ -830,6 +870,7 @@ def init_db():
         _ensure_cursos(cursor)
         _ensure_usuarios(cursor)
         _ensure_estadisticas(cursor)
+        _ensure_textos_cuerpo_catalogo(cursor)
         _ensure_certificados(cursor)
         _ensure_centro_educativo(cursor)
         _ensure_firma_doctores(cursor)
@@ -846,7 +887,7 @@ def init_db():
         conn.commit()
         print(
             "Esquema verificado: TiposCredencial, Cursos, Usuarios, EstadisticasAplicacion, "
-            "Certificados, CentroEducativo, FirmaDoctores, AuditoriaCertificados."
+            "Certificados, TextosCuerpoCertificado, CentroEducativo, FirmaDoctores, AuditoriaCertificados."
         )
     except Exception as e:
         print(f"Error al crear o migrar tablas: {e}")

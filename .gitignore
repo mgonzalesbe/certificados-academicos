@@ -7,3 +7,4 @@ __pycache__/
 
 # PDFs emitidos (opcional: descomente si no desea versionar certificados generados)
 almacenamiento/certificados/*.pdf
+vista_previa_certificado_diseno.pdf

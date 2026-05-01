@@ -251,9 +251,10 @@
             Emisión de certificado (PDF firmado)
           </h2>
           <p class="text-gray-600 mb-6">
-            El diploma incluye el código QR de verificación. Las horas y el
-            mesaje de cuerpo pueden adaptarse a charlas cortas o programas
-            largos.
+            El PDF incluye escudo regional (fijo), títulos del hospital, logo de
+            universidad del centro (si lo subió), código QR y firma del
+            director. Puede personalizar el párrafo central o elegir un texto
+            guardado en Catálogos.
           </p>
 
           <form
@@ -339,23 +340,6 @@
                 Se usa Dr. o Dra. según el género registrado en Catálogos.
               </p>
             </div>
-            <div>
-              <label class="block text-sm font-semibold text-gray-700 mb-1"
-                >Horas (duración o carga académica)</label
-              >
-              <input
-                type="number"
-                id="input-hours"
-                value="2"
-                min="1"
-                max="50000"
-                required
-                class="w-full p-3 border border-gray-300 rounded-lg outline-none"
-              />
-              <p class="text-xs text-gray-500 mt-1">
-                Ej. 2 para una charla breve, 120 para un programa largo.
-              </p>
-            </div>
             <div class="md:col-span-2">
               <label class="flex items-center gap-2 cursor-pointer">
                 <input
@@ -387,13 +371,28 @@
             </div>
             <div class="md:col-span-2">
               <label class="block text-sm font-semibold text-gray-700 mb-1"
+                >Texto guardado (opcional)</label
+              >
+              <select
+                id="select-body-preset"
+                class="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
+              >
+                <option value="">— Escribir manualmente —</option>
+              </select>
+              <p class="text-xs text-gray-500 mt-1">
+                Al elegir una opción se copia el texto al recuadro de abajo; puede
+                editarlo antes de emitir.
+              </p>
+            </div>
+            <div class="md:col-span-2">
+              <label class="block text-sm font-semibold text-gray-700 mb-1"
                 >Texto del cuerpo del diploma (opcional)</label
               >
               <textarea
                 id="input-body"
                 rows="4"
                 class="w-full p-3 border border-gray-300 rounded-lg outline-none"
-                placeholder="Ej. párrafo estilo reconocimiento (cursiva en el PDF). Si lo deja vacío, se genera un texto breve a partir del curso y el tipo."
+                placeholder="Párrafo en cursiva centrado. Si lo deja vacío, se genera un texto breve a partir del curso y el tipo."
               ></textarea>
             </div>
             <div class="md:col-span-2">
@@ -565,8 +564,8 @@
         >
           <h2 class="text-2xl font-bold text-gray-800 mb-2">Catálogos</h2>
           <p class="text-gray-600 mb-6">
-            Mantenga aquí los cursos, tipos de credenciales y centros educativos
-            que aparecen al emitir certificados.
+            Cursos, tipos de credencial, textos reutilizables del diploma, centros
+            (logo universidad a la derecha del PDF) y directores.
           </p>
 
           <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -681,6 +680,76 @@
             class="mt-6 bg-white p-5 rounded-xl shadow-sm border border-gray-200"
           >
             <h3 class="text-lg font-extrabold text-gray-800 mb-4">
+              Textos del cuerpo (reutilizables)
+            </h3>
+            <p class="text-sm text-gray-600 mb-4">
+              Guarde párrafos que use con frecuencia; en Emisión podrá elegir uno y
+              ajustarlo antes de generar el PDF.
+            </p>
+            <form
+              id="form-new-body-preset"
+              class="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4"
+            >
+              <input
+                id="body-preset-name"
+                type="text"
+                required
+                class="p-3 border rounded-lg outline-none md:col-span-2"
+                placeholder="Nombre corto (ej. Internado medicina 2023)"
+              />
+              <textarea
+                id="body-preset-text"
+                rows="4"
+                required
+                class="p-3 border rounded-lg outline-none md:col-span-2"
+                placeholder="Texto del párrafo (aparece en cursiva centrado en el PDF)"
+              ></textarea>
+              <button
+                type="submit"
+                class="md:col-span-2 px-6 py-3 bg-blue-600 text-white rounded-lg font-bold hover:bg-blue-700"
+              >
+                Guardar texto
+              </button>
+            </form>
+            <div id="body-presets-msg" class="text-sm font-medium hidden"></div>
+            <div class="overflow-x-auto">
+              <table class="min-w-full divide-y divide-gray-200">
+                <thead class="bg-gray-50">
+                  <tr>
+                    <th
+                      class="px-4 py-3 text-left text-xs font-bold text-gray-500 uppercase"
+                    >
+                      Nombre
+                    </th>
+                    <th
+                      class="px-4 py-3 text-left text-xs font-bold text-gray-500 uppercase"
+                    >
+                      Vista previa
+                    </th>
+                    <th
+                      class="px-4 py-3 text-center text-xs font-bold text-gray-500 uppercase"
+                    >
+                      Activo
+                    </th>
+                    <th
+                      class="px-4 py-3 text-center text-xs font-bold text-gray-500 uppercase"
+                    >
+                      Acción
+                    </th>
+                  </tr>
+                </thead>
+                <tbody
+                  id="table-body-text-presets"
+                  class="divide-y divide-gray-200"
+                ></tbody>
+              </table>
+            </div>
+          </div>
+
+          <div
+            class="mt-6 bg-white p-5 rounded-xl shadow-sm border border-gray-200"
+          >
+            <h3 class="text-lg font-extrabold text-gray-800 mb-4">
               Centros educativos
             </h3>
             <form
@@ -702,7 +771,7 @@
                 <option value="Inactivo">Inactivo</option>
               </select>
               <label class="block text-xs font-semibold text-gray-600 md:col-span-2"
-                >Logo superior izquierdo (opcional) — se quita fondo claro al subir</label
+                >Logo institucional (opcional, archivo interno) — no se usa en el PDF: a la izquierda va el escudo regional fijo del sistema.</label
               >
               <input
                 id="centro-logo"
@@ -711,7 +780,7 @@
                 class="p-2 border rounded-lg outline-none text-sm md:col-span-2"
               />
               <label class="block text-xs font-semibold text-gray-600 md:col-span-2"
-                >Logo superior derecho (universidad), opcional — se procesa para quitar fondo claro</label
+                >Logo universidad (superior derecha del PDF), opcional — se procesa para quitar fondo claro</label
               >
               <input
                 id="centro-logo-derecho"
@@ -738,8 +807,9 @@
                     </th>
                     <th
                       class="px-4 py-3 text-center text-xs font-bold text-gray-500 uppercase"
+                      title="Archivo opcional; el PDF no lo muestra a la izquierda"
                     >
-                      Logo izq.
+                      Logo arch.
                     </th>
                     <th
                       class="px-4 py-3 text-center text-xs font-bold text-gray-500 uppercase"
