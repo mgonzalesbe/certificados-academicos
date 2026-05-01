@@ -384,21 +384,9 @@ function toFiniteNumber(value) {
   return Number.isFinite(n) ? n : 0;
 }
 
-function setBarWidth(id, pct, className) {
-  const el = document.getElementById(id);
-  if (!el) return;
-  el.style.width = `${Math.max(0, Math.min(100, pct))}%`;
-  if (className) el.className = `h-full rounded-full ${className}`;
-}
-
 function setText(id, text) {
   const el = document.getElementById(id);
   if (el) el.textContent = text;
-}
-
-function pctChange(current, previous) {
-  if (!previous) return current > 0 ? 100 : 0;
-  return ((current - previous) / previous) * 100;
 }
 
 function renderChartKpis(items) {
@@ -418,111 +406,30 @@ function getDrillChartConfig(metricKey) {
     dashboardState.verifications > 0
       ? (dashboardState.valid / dashboardState.verifications) * 100
       : 0;
-  const invalidRate = Math.max(0, 100 - validRate);
   const monthly = dashboardInsights.monthly || [];
   const monthLabels = monthly.map((m) => m.label);
-  const emittedSeries = monthly.map((m) => toFiniteNumber(m.emitted));
-  const activeSeries = monthly.map((m) => toFiniteNumber(m.active));
-  const revokedSeries = monthly.map((m) => toFiniteNumber(m.revoked));
   const avgGenSeries = monthly.map((m) => toFiniteNumber(m.avgGen));
   const avgVerSeries = monthly.map((m) => toFiniteNumber(m.avgVer));
-  const lastEmitted = emittedSeries.length ? emittedSeries[emittedSeries.length - 1] : 0;
-  const prevEmitted = emittedSeries.length > 1 ? emittedSeries[emittedSeries.length - 2] : 0;
-  const trend = pctChange(lastEmitted, prevEmitted);
 
-  if (metricKey === "generated") {
-    return {
-      title: "Certificados emitidos",
-      subtitle: "Comparativa mensual de emisión y estado (últimos meses).",
-      kpis: [
-        `Total histórico: ${dashboardState.generated}`,
-        `Último periodo: ${lastEmitted}`,
-        `Variación vs anterior: ${trend >= 0 ? "+" : ""}${trend.toFixed(1)}%`,
-      ],
-      chart: {
-        type: "bar",
-        data: {
-          labels: monthLabels.length ? monthLabels : ["Sin datos"],
-          datasets: [
-            {
-              label: "Emitidos",
-              data: monthLabels.length ? emittedSeries : [0],
-              backgroundColor: "#3b82f6",
-              borderRadius: 8,
-            },
-            {
-              label: "Activos",
-              data: monthLabels.length ? activeSeries : [0],
-              backgroundColor: "#10b981",
-              borderRadius: 8,
-            },
-            {
-              label: "Revocados",
-              data: monthLabels.length ? revokedSeries : [0],
-              backgroundColor: "#ef4444",
-              borderRadius: 8,
-            },
-          ],
-        },
-      },
-    };
-  }
-  if (metricKey === "verifications") {
-    return {
-      title: "Total verificaciones",
-      subtitle: "Volumen y calidad de verificaciones en una sola vista.",
-      kpis: [
-        `Verificaciones totales: ${dashboardState.verifications}`,
-        `Correctas: ${dashboardState.valid}`,
-        `Incorrectas: ${dashboardState.invalid}`,
-      ],
-      chart: {
-        type: "bar",
-        data: {
-          labels: ["Totales", "Correctas", "Incorrectas"],
-          datasets: [
-            {
-              label: "Cantidad",
-              data: [dashboardState.verifications, dashboardState.valid, dashboardState.invalid],
-              backgroundColor: ["#8b5cf6", "#10b981", "#ef4444"],
-              borderRadius: 8,
-            },
-            {
-              type: "line",
-              label: "Porcentaje",
-              data: [100, validRate, invalidRate],
-              borderColor: "#334155",
-              backgroundColor: "#334155",
-              yAxisID: "y1",
-              tension: 0.3,
-            },
-          ],
-        },
-      },
-    };
-  }
   if (metricKey === "valid") {
     return {
-      title: "Validaciones correctas",
-      subtitle: `Comparativa entre calidad de verificación y estado del inventario.`,
+      title: "Número de certificados validados",
+      subtitle:
+        "Resultado acumulado de las verificaciones de autenticidad (correctas frente a incorrectas).",
       kpis: [
+        `Verificaciones correctas: ${dashboardState.valid}`,
+        `Verificaciones incorrectas: ${dashboardState.invalid}`,
+        `Total de intentos: ${dashboardState.verifications}`,
         `Tasa de acierto: ${validRate.toFixed(1)}%`,
-        `Certificados activos: ${dashboardInsights.status.active || 0}`,
-        `Certificados revocados: ${dashboardInsights.status.revoked || 0}`,
       ],
       chart: {
-        type: "polarArea",
+        type: "doughnut",
         data: {
-          labels: ["Correctas", "Incorrectas", "Activos", "Revocados"],
+          labels: ["Correctas", "Incorrectas"],
           datasets: [
             {
-              data: [
-                dashboardState.valid,
-                dashboardState.invalid,
-                toFiniteNumber(dashboardInsights.status.active),
-                toFiniteNumber(dashboardInsights.status.revoked),
-              ],
-              backgroundColor: ["#10b981", "#ef4444", "#22c55e", "#f97316"],
+              data: [dashboardState.valid, dashboardState.invalid],
+              backgroundColor: ["#10b981", "#ef4444"],
               borderWidth: 0,
             },
           ],
@@ -622,20 +529,33 @@ function setDashboardCardActive(metricKey) {
   });
 }
 
+function closeDashboardChartModal() {
+  const modal = document.getElementById("dashboard-chart-modal");
+  if (modal) modal.classList.add("hidden");
+  if (dashboardCharts.drill) {
+    dashboardCharts.drill.destroy();
+    dashboardCharts.drill = null;
+  }
+  setDashboardCardActive("");
+  renderChartKpis([]);
+  selectedDashboardMetric = null;
+}
+
 function renderDrillChart(metricKey) {
   if (typeof Chart === "undefined") return;
   const canvas = document.getElementById("dashboard-drill-chart");
-  const panel = document.getElementById("dashboard-chart-panel");
-  if (!canvas || !panel) return;
+  const modal = document.getElementById("dashboard-chart-modal");
+  if (!canvas || !modal) return;
   const config = getDrillChartConfig(metricKey);
   setText("dashboard-chart-title", config.title);
   setText("dashboard-chart-subtitle", config.subtitle);
   renderChartKpis(config.kpis || []);
-  panel.classList.remove("hidden");
+  modal.classList.remove("hidden");
   setDashboardCardActive(metricKey);
 
   if (dashboardCharts.drill) {
     dashboardCharts.drill.destroy();
+    dashboardCharts.drill = null;
   }
   dashboardCharts.drill = new Chart(canvas, {
     type: config.chart.type,
@@ -675,29 +595,30 @@ function renderDrillChart(metricKey) {
 function setupDashboardCardInteractions() {
   document.querySelectorAll(".dashboard-chart-card").forEach((card) => {
     card.addEventListener("click", () => {
-      selectedDashboardMetric = card.dataset.chartKey || "generated";
+      const key = card.dataset.chartKey;
+      if (!key) return;
+      selectedDashboardMetric = key;
       renderDrillChart(selectedDashboardMetric);
     });
   });
   const btnHide = document.getElementById("dashboard-chart-hide");
-  const panel = document.getElementById("dashboard-chart-panel");
-  if (btnHide && panel) {
-    btnHide.addEventListener("click", () => {
-      panel.classList.add("hidden");
-      setDashboardCardActive("");
-      renderChartKpis([]);
-      selectedDashboardMetric = null;
-    });
+  if (btnHide) {
+    btnHide.addEventListener("click", () => closeDashboardChartModal());
   }
+  const backdrop = document.getElementById("dashboard-chart-modal-backdrop");
+  if (backdrop) {
+    backdrop.addEventListener("click", () => closeDashboardChartModal());
+  }
+  document.addEventListener("keydown", (ev) => {
+    if (ev.key !== "Escape") return;
+    const modal = document.getElementById("dashboard-chart-modal");
+    if (modal && !modal.classList.contains("hidden")) {
+      closeDashboardChartModal();
+    }
+  });
 }
 
 function refreshDashboardVisuals() {
-  const maxTop = Math.max(
-    dashboardState.generated,
-    dashboardState.verifications,
-    dashboardState.valid,
-    1,
-  );
   const validRate =
     dashboardState.verifications > 0
       ? (dashboardState.valid / dashboardState.verifications) * 100
@@ -709,12 +630,6 @@ function refreshDashboardVisuals() {
   setText("rep-avg-gen", `${dashboardState.avgGen.toFixed(4)} s`);
   setText("rep-avg-ver", `${dashboardState.avgVer.toFixed(4)} s`);
 
-  setBarWidth("chart-generated-bar", (dashboardState.generated / maxTop) * 100);
-  setBarWidth(
-    "chart-verifications-bar",
-    (dashboardState.verifications / maxTop) * 100,
-  );
-  setBarWidth("chart-valid-bar", validRate);
   setText(
     "chart-generated-note",
     `${dashboardState.generated} registros emitidos hasta ahora`,
@@ -723,16 +638,13 @@ function refreshDashboardVisuals() {
     "chart-verifications-note",
     `${dashboardState.verifications} verificaciones acumuladas`,
   );
-  setText("chart-valid-note", `Tasa de acierto: ${validRate.toFixed(1)}%`);
+  setText(
+    "chart-valid-note",
+    dashboardState.verifications > 0
+      ? `${dashboardState.valid} correctas de ${dashboardState.verifications} verificaciones (${validRate.toFixed(1)}%)`
+      : "Sin verificaciones registradas aún",
+  );
 
-  const genPct = Math.min((dashboardState.avgGen / 2) * 100, 100);
-  const verPct = Math.min((dashboardState.avgVer / 1.5) * 100, 100);
-  const genColor =
-    dashboardState.avgGen <= 1 ? "bg-emerald-500" : dashboardState.avgGen <= 2 ? "bg-amber-500" : "bg-red-500";
-  const verColor =
-    dashboardState.avgVer <= 0.8 ? "bg-emerald-500" : dashboardState.avgVer <= 1.5 ? "bg-amber-500" : "bg-red-500";
-  setBarWidth("chart-avg-gen-bar", genPct, genColor);
-  setBarWidth("chart-avg-ver-bar", verPct, verColor);
   setText("chart-avg-gen-note", `Meta sugerida: <= 2.00 s (actual ${dashboardState.avgGen.toFixed(4)} s)`);
   setText("chart-avg-ver-note", `Meta sugerida: <= 1.50 s (actual ${dashboardState.avgVer.toFixed(4)} s)`);
 
