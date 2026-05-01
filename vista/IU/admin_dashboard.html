@@ -375,9 +375,9 @@
                 placeholder="Párrafo en cursiva centrado. Si lo deja vacío, no aparece texto de cuerpo en el PDF."
               ></textarea>
               <p class="text-xs text-gray-500 mt-1">
-                Use <code class="bg-gray-100 px-1 rounded">[[CURSO]]</code> donde deba aparecer el nombre del
-                programa elegido arriba (se sustituye al generar). El tipo de credencial ya va en el título
-                grande del PDF; no hace falta repetirlo en este párrafo.
+                Si escribe <code class="bg-gray-100 px-1 rounded">[[CURSO]]</code>, al elegir el programa en la
+                lista de arriba se sustituye por el nombre del curso. Si ya eligió el curso, el botón inserta
+                directamente ese nombre. El tipo de credencial ya va en el título grande del PDF.
               </p>
               <div class="flex flex-wrap gap-2 mt-2">
                 <button
@@ -385,7 +385,7 @@
                   id="btn-insert-curso-marker"
                   class="text-xs font-semibold px-3 py-1.5 rounded-lg bg-slate-200 text-slate-800 hover:bg-slate-300"
                 >
-                  Insertar [[CURSO]] aquí
+                  Insertar curso aquí
                 </button>
               </div>
             </div>

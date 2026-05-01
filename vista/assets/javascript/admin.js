@@ -167,6 +167,11 @@ function selectCourseEmit(c) {
     courseSearch.classList.remove("border-red-300");
     courseSearch.classList.add("border-green-300");
   }
+  const ta = document.getElementById("input-body");
+  if (ta && ta.value.includes("[[CURSO]]")) {
+    const nm = String(c.name || "");
+    ta.value = ta.value.split("[[CURSO]]").join(nm);
+  }
 }
 
 function filterCoursesEmitQuery(query) {
@@ -210,8 +215,18 @@ function insertBodyMarker(marker) {
   ta.focus();
 }
 
-document.getElementById("btn-insert-curso-marker")?.addEventListener("click", () => {
+function insertCursoIntoBody() {
+  const hid = document.getElementById("input-course-id");
+  const label = courseSearch?.value?.trim();
+  if (hid?.value && label) {
+    insertBodyMarker(label);
+    return;
+  }
   insertBodyMarker("[[CURSO]]");
+}
+
+document.getElementById("btn-insert-curso-marker")?.addEventListener("click", () => {
+  insertCursoIntoBody();
 });
 
 document.addEventListener("click", (e) => {
