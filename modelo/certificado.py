@@ -827,6 +827,7 @@ def obtener_dashboard_insights():
         "status": {"total": 0, "active": 0, "revoked": 0},
         "topCourses": [],
         "topTypes": [],
+        "tvByCertificate": [],
     }
     if not conn:
         return default_payload
@@ -911,6 +912,38 @@ def obtener_dashboard_insights():
             for r in cursor.fetchall()
         ]
 
+        cursor.execute(
+            """
+            SELECT x.IdCertificado, x.NombreEstudiante, x.TvSeg, x.EsValido
+            FROM (
+                SELECT TOP 50
+                    c.IdCertificado,
+                    c.NombreEstudiante,
+                    CAST(c.TiempoVerificacionSeg AS FLOAT) AS TvSeg,
+                    CAST(ISNULL(c.EsValido, 0) AS INT) AS EsValido,
+                    c.FechaCreacion
+                FROM Certificados c
+                WHERE c.TiempoVerificacionSeg IS NOT NULL
+                ORDER BY c.FechaCreacion DESC, c.IdCertificado DESC
+            ) AS x
+            ORDER BY x.FechaCreacion ASC, x.IdCertificado ASC
+            """
+        )
+        tv_by_certificate = []
+        for r in cursor.fetchall():
+            raw_name = (getattr(r, "NombreEstudiante", None) or "").strip() or "(Sin nombre)"
+            cid = int(getattr(r, "IdCertificado", 0) or 0)
+            short = raw_name if len(raw_name) <= 14 else (raw_name[:13] + "…")
+            tv_by_certificate.append(
+                {
+                    "id": cid,
+                    "name": raw_name,
+                    "label": f"{short} (#{cid})",
+                    "tv": float(getattr(r, "TvSeg", 0) or 0),
+                    "valid": bool(int(getattr(r, "EsValido", 0) or 0)),
+                }
+            )
+
         return {
             "monthly": monthly,
             "status": {
@@ -920,6 +953,7 @@ def obtener_dashboard_insights():
             },
             "topCourses": top_courses,
             "topTypes": top_types,
+            "tvByCertificate": tv_by_certificate,
         }
     except Exception:
         return default_payload

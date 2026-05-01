@@ -18,6 +18,49 @@ function setupPasswordToggle(inputId, btnId) {
 setupPasswordToggle("login-pass", "toggle-login-pass");
 setupPasswordToggle("reg-pass", "toggle-reg-pass");
 
+const REG_INPUT_IDS = [
+  "reg-user",
+  "reg-doc",
+  "reg-email",
+  "reg-pass",
+  "reg-nombres",
+  "reg-apellidos",
+];
+const REG_ERROR_IDS = [
+  "reg-user-error",
+  "reg-doc-error",
+  "reg-email-error",
+  "reg-pass-error",
+];
+
+function clearRegisterFieldErrors() {
+  REG_INPUT_IDS.forEach((id) => {
+    const el = document.getElementById(id);
+    if (el) {
+      el.classList.remove("border-red-500", "ring-1", "ring-red-500");
+    }
+  });
+  REG_ERROR_IDS.forEach((id) => {
+    const err = document.getElementById(id);
+    if (err) {
+      err.textContent = "";
+      err.classList.add("hidden");
+    }
+  });
+}
+
+function setRegisterFieldError(fieldId, message) {
+  const inp = document.getElementById(fieldId);
+  if (inp) {
+    inp.classList.add("border-red-500", "ring-1", "ring-red-500");
+  }
+  const err = document.getElementById(`${fieldId}-error`);
+  if (err && message) {
+    err.textContent = message;
+    err.classList.remove("hidden");
+  }
+}
+
 function showMsg(text, ok) {
   msgEl.textContent = text;
   msgEl.classList.remove(
@@ -27,12 +70,15 @@ function showMsg(text, ok) {
     "bg-emerald-100",
     "text-emerald-800",
   );
-  msgEl.classList.add(
-    ok ? "bg-emerald-100 text-emerald-800" : "bg-red-100 text-red-800",
-  );
+  if (ok) {
+    msgEl.classList.add("bg-emerald-100", "text-emerald-800");
+  } else {
+    msgEl.classList.add("bg-red-100", "text-red-800");
+  }
 }
 
 document.getElementById("tab-login").addEventListener("click", () => {
+  clearRegisterFieldErrors();
   document.getElementById("form-login").classList.remove("hidden");
   document.getElementById("form-register").classList.add("hidden");
   document
@@ -46,6 +92,7 @@ document.getElementById("tab-login").addEventListener("click", () => {
 });
 
 document.getElementById("tab-register").addEventListener("click", () => {
+  clearRegisterFieldErrors();
   document.getElementById("form-register").classList.remove("hidden");
   document.getElementById("form-login").classList.add("hidden");
   document
@@ -61,24 +108,33 @@ document.getElementById("tab-register").addEventListener("click", () => {
 document.getElementById("form-login").addEventListener("submit", async (e) => {
   e.preventDefault();
   msgEl.classList.add("hidden");
-  const r = await fetch("/api/auth/login", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    credentials: "same-origin",
-    body: JSON.stringify({
-      username: document.getElementById("login-user").value.trim(),
-      password: document.getElementById("login-pass").value,
-    }),
-  });
-  const data = await r.json().catch(() => ({}));
-  if (!r.ok) {
-    showMsg(data.error || "Error al iniciar sesión", false);
-    return;
-  }
-  if (data.user?.role === "admin") {
-    window.location.href = "/app/admin";
-  } else {
-    window.location.href = "/app/alumno";
+  try {
+    const r = await fetch("/api/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "same-origin",
+      body: JSON.stringify({
+        username: document.getElementById("login-user").value.trim(),
+        password: document.getElementById("login-pass").value,
+      }),
+    });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      showMsg(
+        data.error ||
+          (data.message && String(data.message)) ||
+          "Usuario o contraseña incorrectos",
+        false,
+      );
+      return;
+    }
+    if (data.user?.role === "admin") {
+      window.location.href = "/app/admin";
+    } else {
+      window.location.href = "/app/alumno";
+    }
+  } catch {
+    showMsg("No se pudo conectar con el servidor. Intente de nuevo.", false);
   }
 });
 
@@ -87,25 +143,45 @@ document
   .addEventListener("submit", async (e) => {
     e.preventDefault();
     msgEl.classList.add("hidden");
+    clearRegisterFieldErrors();
     const username = document.getElementById("reg-user").value.trim();
     const email = document.getElementById("reg-email").value.trim();
     const password = document.getElementById("reg-pass").value;
-    const r = await fetch("/api/auth/register", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      credentials: "same-origin",
-      body: JSON.stringify({
-        username: username,
-        documento_identidad: document.getElementById("reg-doc").value.trim(),
-        nombres: document.getElementById("reg-nombres").value.trim(),
-        apellidos: document.getElementById("reg-apellidos").value.trim(),
-        email: email,
-        password: password,
-      }),
-    });
-    const data = await r.json().catch(() => ({}));
-    if (!r.ok) {
-      showMsg(data.error || "No se pudo registrar", false);
+    let data = {};
+    try {
+      const r = await fetch("/api/auth/register", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
+        body: JSON.stringify({
+          username: username,
+          documento_identidad: document.getElementById("reg-doc").value.trim(),
+          nombres: document.getElementById("reg-nombres").value.trim(),
+          apellidos: document.getElementById("reg-apellidos").value.trim(),
+          email: email,
+          password: password,
+        }),
+      });
+      data = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        const fe = data.fieldErrors && typeof data.fieldErrors === "object"
+          ? data.fieldErrors
+          : {};
+        Object.entries(fe).forEach(([fieldId, msg]) => {
+          if (msg) setRegisterFieldError(fieldId, String(msg));
+        });
+        const summary =
+          data.error ||
+          "No se pudo registrar.";
+        if (Object.keys(fe).length) {
+          showMsg(`${summary} Revise los campos marcados en rojo.`, false);
+        } else {
+          showMsg(summary, false);
+        }
+        return;
+      }
+    } catch {
+      showMsg("No se pudo conectar con el servidor. Intente de nuevo.", false);
       return;
     }
     // Auto-login after successful registration

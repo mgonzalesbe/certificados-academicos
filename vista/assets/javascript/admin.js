@@ -21,11 +21,14 @@ const ModalUtil = {
   show(title, message, isConfirm = false) {
     return new Promise((resolve) => {
       document.getElementById("modal-title").textContent = title;
-      document.getElementById("modal-msg").textContent = message;
+      const msgBox = document.getElementById("modal-msg");
+      msgBox.replaceChildren();
+      msgBox.textContent = message;
       const btnCancel = document.getElementById("modal-btn-cancel");
       const btnConfirm = document.getElementById("modal-btn-confirm");
       const overlay = document.getElementById("modal-overlay");
       btnCancel.classList.toggle("hidden", !isConfirm);
+      btnConfirm.textContent = "Aceptar";
       btnConfirm.onclick = () => {
         overlay.classList.add("hidden");
         resolve(true);
@@ -34,6 +37,76 @@ const ModalUtil = {
         overlay.classList.add("hidden");
         resolve(false);
       };
+      overlay.classList.remove("hidden");
+    });
+  },
+
+  showCertificateGenerated(info) {
+    return new Promise((resolve) => {
+      const {
+        certId,
+        timeSec,
+        mailSent,
+        studentName,
+        courseName,
+        typeName,
+        hasPdf,
+      } = info;
+      document.getElementById("modal-title").textContent = "Certificado generado";
+      const box = document.getElementById("modal-msg");
+      box.replaceChildren();
+
+      const lead = document.createElement("p");
+      lead.className = "text-gray-800 font-semibold";
+      lead.textContent =
+        "El certificado ha sido generado y registrado correctamente en el sistema.";
+      box.appendChild(lead);
+
+      const sent = document.createElement("p");
+      sent.className = mailSent ? "text-emerald-800" : "text-amber-800";
+      sent.textContent = mailSent
+        ? "La notificación se ha enviado por correo electrónico al alumno (incluye el certificado en PDF)."
+        : "No se pudo enviar el correo automático. Revise la configuración SMTP o avise al alumno por otro medio.";
+      box.appendChild(sent);
+
+      const addLine = (label, value) => {
+        const p = document.createElement("p");
+        const b = document.createElement("strong");
+        b.textContent = `${label}: `;
+        p.appendChild(b);
+        p.appendChild(document.createTextNode(value == null || value === "" ? "—" : String(value)));
+        box.appendChild(p);
+      };
+      addLine("Identificador", certId);
+      addLine("Estudiante", studentName);
+      addLine("Curso", courseName);
+      addLine("Tipo", typeName);
+      addLine("Tiempo de generación (TGC)", `${Number(timeSec).toFixed(4)} s`);
+
+      if (hasPdf === false) {
+        const warn = document.createElement("p");
+        warn.className = "text-amber-800";
+        warn.textContent =
+          "Advertencia: el PDF no se generó o no se guardó correctamente; revise el servidor.";
+        box.appendChild(warn);
+      }
+
+      const foot = document.createElement("p");
+      foot.className = "text-gray-600 mt-2";
+      foot.textContent =
+        "Para descargar el PDF use la pestaña «Certificados» del menú principal; allí encontrará el listado y la opción de descarga.";
+      box.appendChild(foot);
+
+      const btnCancel = document.getElementById("modal-btn-cancel");
+      const btnConfirm = document.getElementById("modal-btn-confirm");
+      const overlay = document.getElementById("modal-overlay");
+      btnCancel.classList.add("hidden");
+      btnConfirm.textContent = "Aceptar";
+      const close = () => {
+        overlay.classList.add("hidden");
+        resolve(true);
+      };
+      btnConfirm.onclick = close;
       overlay.classList.remove("hidden");
     });
   },
@@ -377,6 +450,7 @@ const dashboardInsights = {
   status: { total: 0, active: 0, revoked: 0 },
   topCourses: [],
   topTypes: [],
+  tvByCertificate: [],
 };
 
 function toFiniteNumber(value) {
@@ -486,36 +560,146 @@ function getDrillChartConfig(metricKey) {
       },
     };
   }
-  const topCourses = (dashboardInsights.topCourses || []).slice(0, 4);
-  const topTypes = (dashboardInsights.topTypes || []).slice(0, 4);
-  const labels = [
-    ...topCourses.map((x) => `Curso: ${x.name}`),
-    ...topTypes.map((x) => `Tipo: ${x.name}`),
-  ];
-  const values = [
-    ...topCourses.map((x) => toFiniteNumber(x.count)),
-    ...topTypes.map((x) => toFiniteNumber(x.count)),
-  ];
-  return {
-    title: "Tiempo de verificación de certificados (TV)",
-    subtitle: "Contexto operativo: carga por cursos y tipos más usados.",
-    kpis: [
-      `TV global: ${dashboardState.avgVer.toFixed(4)} s`,
-      topCourses[0] ? `Curso líder: ${topCourses[0].name} (${topCourses[0].count})` : "Sin cursos suficientes",
-      topTypes[0] ? `Tipo líder: ${topTypes[0].name} (${topTypes[0].count})` : "Sin tipos suficientes",
-    ],
-    chart: {
-      type: "bar",
-      data: {
-        labels: labels.length ? labels : ["Sin datos"],
-        datasets: [
-          {
-            label: "Certificados",
-            data: labels.length ? values : [0],
-            backgroundColor: labels.map((_, idx) => (idx < topCourses.length ? "#3b82f6" : "#8b5cf6")),
-            borderRadius: 8,
-          },
+  if (metricKey === "avgVer") {
+    const tvList = dashboardInsights.tvByCertificate || [];
+    const hasSeries = tvList.length >= 2;
+    const monthLabs = monthLabels.length ? monthLabels : ["Sin datos"];
+    const avgVerMonth = monthLabels.length ? avgVerSeries : [dashboardState.avgVer];
+
+    if (hasSeries) {
+      const labels = tvList.map((r) => r.label);
+      const values = tvList.map((r) => toFiniteNumber(r.tv));
+      const maxEntry = tvList.reduce((a, b) =>
+        toFiniteNumber(a.tv) >= toFiniteNumber(b.tv) ? a : b,
+      );
+      const minEntry = tvList.reduce((a, b) =>
+        toFiniteNumber(a.tv) <= toFiniteNumber(b.tv) ? a : b,
+      );
+      const yTop = Math.max(...values, 1.5, dashboardState.avgVer) * 1.12;
+      return {
+        title: "Tiempo de verificación de certificados (TV)",
+        subtitle:
+          "Hasta 50 certificados recientes con TV registrado, en orden cronológico de emisión. Cada punto es la última verificación medida en ese certificado; la línea punteada es la meta sugerida.",
+        kpis: [
+          `TV global (promedio): ${dashboardState.avgVer.toFixed(4)} s`,
+          `Mayor TV en la muestra: ${toFiniteNumber(maxEntry.tv).toFixed(4)} s — ${maxEntry.name || "(Sin nombre)"}`,
+          `Menor TV en la muestra: ${toFiniteNumber(minEntry.tv).toFixed(4)} s — ${minEntry.name || "(Sin nombre)"}`,
+          `Certificados representados: ${tvList.length}`,
         ],
+        chart: {
+          type: "line",
+          data: {
+            labels,
+            datasets: [
+              {
+                label: "TV última verificación (s)",
+                data: values,
+                borderColor: "#8b5cf6",
+                backgroundColor: "rgba(139,92,246,0.14)",
+                fill: true,
+                tension: 0.28,
+                pointRadius: 3,
+                pointHoverRadius: 6,
+              },
+              {
+                label: "Meta TV (1.50 s)",
+                data: labels.map(() => 1.5),
+                borderColor: "#94a3b8",
+                borderDash: [6, 6],
+                pointRadius: 0,
+                fill: false,
+              },
+            ],
+          },
+        },
+        extraChartOptions: {
+          scales: {
+            y: { beginAtZero: true, suggestedMax: yTop },
+            x: {
+              ticks: {
+                maxRotation: 45,
+                minRotation: 0,
+                autoSkip: true,
+                maxTicksLimit: 24,
+              },
+            },
+          },
+          plugins: {
+            tooltip: {
+              callbacks: {
+                title(items) {
+                  const i = items[0]?.dataIndex;
+                  const row = tvList[i];
+                  return row ? `Certificado #${row.id}` : "";
+                },
+                label(ctx) {
+                  if (ctx.datasetIndex === 1) {
+                    return `Meta sugerida: ${Number(ctx.raw).toFixed(2)} s`;
+                  }
+                  const row = tvList[ctx.dataIndex];
+                  const v = Number(ctx.parsed.y).toFixed(4);
+                  if (!row) return `TV: ${v} s`;
+                  const ok = row.valid ? "verificación válida" : "verificación no válida";
+                  return [`TV: ${v} s`, `${row.name}`, `Última medición: ${ok}`];
+                },
+              },
+            },
+          },
+        },
+      };
+    }
+
+    return {
+      title: "Tiempo de verificación de certificados (TV)",
+      subtitle:
+        tvList.length === 1
+          ? "Solo hay un certificado con TV registrado; se muestra el promedio mensual si existe."
+          : "Evolución mensual del TV promedio frente a la meta sugerida (1,50 s). Acumule verificaciones para ver también el detalle por certificado.",
+      kpis: [
+        `TV global: ${dashboardState.avgVer.toFixed(4)} s`,
+        tvList.length === 1
+          ? `Único certificado con TV: ${tvList[0].name} — ${toFiniteNumber(tvList[0].tv).toFixed(4)} s`
+          : "Meta sugerida TV <= 1.50 s",
+        monthLabels.length
+          ? `Meses con datos: ${monthLabels.length}`
+          : "Sin serie mensual todavía.",
+      ],
+      chart: {
+        type: "line",
+        data: {
+          labels: monthLabs,
+          datasets: [
+            {
+              label: "TV promedio mensual",
+              data: avgVerMonth,
+              borderColor: "#8b5cf6",
+              backgroundColor: "rgba(139,92,246,0.14)",
+              fill: true,
+              tension: 0.35,
+            },
+            {
+              label: "Meta TV (1.50 s)",
+              data: monthLabs.map(() => 1.5),
+              borderColor: "#94a3b8",
+              borderDash: [6, 6],
+              pointRadius: 0,
+              fill: false,
+            },
+          ],
+        },
+      },
+    };
+  }
+
+  return {
+    title: "Gráfico",
+    subtitle: "Sin configuración para esta métrica.",
+    kpis: [],
+    chart: {
+      type: "line",
+      data: {
+        labels: ["—"],
+        datasets: [{ label: "—", data: [0], borderColor: "#cbd5e1" }],
       },
     },
   };
@@ -557,37 +741,45 @@ function renderDrillChart(metricKey) {
     dashboardCharts.drill.destroy();
     dashboardCharts.drill = null;
   }
+
+  const chartType = config.chart.type;
+  const plugins = {
+    legend: { position: chartType === "doughnut" ? "bottom" : "top" },
+  };
+  if (config.extraChartOptions?.plugins?.tooltip) {
+    plugins.tooltip = config.extraChartOptions.plugins.tooltip;
+  }
+
+  let scales;
+  if (chartType === "bar") {
+    const hasPctAxis = (config.chart.data.datasets || []).some((d) => d.yAxisID === "y1");
+    if (!hasPctAxis) {
+      scales = { y: { beginAtZero: true, ticks: { precision: 0 } } };
+    } else {
+      scales = {
+        y: { beginAtZero: true, ticks: { precision: 0 } },
+        y1: {
+          beginAtZero: true,
+          position: "right",
+          grid: { drawOnChartArea: false },
+          ticks: { callback: (v) => `${v}%` },
+        },
+      };
+    }
+  } else if (chartType === "line") {
+    scales = config.extraChartOptions?.scales || { y: { beginAtZero: true } };
+  } else {
+    scales = undefined;
+  }
+
   dashboardCharts.drill = new Chart(canvas, {
-    type: config.chart.type,
+    type: chartType,
     data: config.chart.data,
     options: {
       responsive: true,
       maintainAspectRatio: false,
-      plugins: {
-        legend: { position: config.chart.type === "doughnut" ? "bottom" : "top" },
-      },
-      scales:
-        config.chart.type === "bar"
-          ? (() => {
-              const hasPctAxis = (config.chart.data.datasets || []).some(
-                (d) => d.yAxisID === "y1",
-              );
-              if (!hasPctAxis) {
-                return { y: { beginAtZero: true, ticks: { precision: 0 } } };
-              }
-              return {
-                y: { beginAtZero: true, ticks: { precision: 0 } },
-                y1: {
-                  beginAtZero: true,
-                  position: "right",
-                  grid: { drawOnChartArea: false },
-                  ticks: { callback: (v) => `${v}%` },
-                },
-              };
-            })()
-          : config.chart.type === "line"
-            ? { y: { beginAtZero: true } }
-          : undefined,
+      plugins,
+      scales,
     },
   });
 }
@@ -1005,48 +1197,6 @@ async function changeCatalogStatus({ kind, id, name, currentActive }) {
   }
 }
 
-function showCreateResultSuccess(resDiv, certId, timeSec, pdfOk, mailSent) {
-  resDiv.replaceChildren();
-  const p = document.createElement("p");
-  p.className = "mb-2";
-  p.append("Certificado ", document.createElement("strong"));
-  p.querySelector("strong").textContent = certId;
-  p.append(" firmado y registrado.");
-  resDiv.appendChild(p);
-  const sub = document.createElement("div");
-  sub.className = "text-sm font-semibold text-emerald-900 space-y-2";
-  sub.appendChild(document.createElement("p")).textContent =
-    `TGC: ${Number(timeSec).toFixed(4)} s`;
-  if (pdfOk) {
-    const a = document.createElement("a");
-    a.href = `/api/certificates/${encodeURIComponent(certId)}/pdf`;
-    a.className = "inline-block mt-2 text-blue-700 underline font-bold";
-    a.textContent = "Descargar PDF del diploma";
-    a.setAttribute("download", "");
-    sub.appendChild(a);
-  } else {
-    const w = document.createElement("p");
-    w.className = "text-amber-800";
-    w.textContent =
-      "El PDF no se pudo generar; revise la consola del servidor.";
-    sub.appendChild(w);
-  }
-
-  const mailP = document.createElement("p");
-  if (mailSent) {
-    mailP.className = "text-emerald-700 mt-2";
-    mailP.innerHTML =
-      '<i class="fas fa-envelope"></i> Correo de notificación enviado al alumno.';
-  } else {
-    mailP.className = "text-amber-700 mt-2";
-    mailP.innerHTML =
-      '<i class="fas fa-exclamation-triangle"></i> El correo no se pudo enviar (verifique configuración SMTP).';
-  }
-  sub.appendChild(mailP);
-
-  resDiv.appendChild(sub);
-}
-
 function showCreateResultError(resDiv, message) {
   resDiv.replaceChildren();
   const s = document.createElement("strong");
@@ -1129,20 +1279,22 @@ document.getElementById("form-create").addEventListener("submit", async (e) => {
       "text-red-800",
     );
     if (!response.ok) {
+      resDiv.classList.remove("hidden");
       resDiv.classList.add("bg-red-100", "text-red-800");
       showCreateResultError(resDiv, result.error || "Error del servidor");
       return;
     }
-    resDiv.classList.add("bg-emerald-100", "text-emerald-800");
-    const pdfOk = Boolean(result.cert?.hasPdf);
-    const mailSent = Boolean(result.cert?.mailSent);
-    showCreateResultSuccess(
-      resDiv,
-      result.cert.id,
-      result.time,
-      pdfOk,
-      mailSent,
-    );
+    resDiv.classList.add("hidden");
+    resDiv.replaceChildren();
+    await ModalUtil.showCertificateGenerated({
+      certId: result.cert.id,
+      timeSec: result.time,
+      mailSent: Boolean(result.cert?.mailSent),
+      studentName: result.cert?.name || studentName,
+      courseName: result.cert?.course || "",
+      typeName: result.cert?.type || "",
+      hasPdf: Boolean(result.cert?.hasPdf),
+    });
     e.target.reset();
     document.getElementById("input-student-search").value = "";
     document.getElementById("input-student-id").value = "";
@@ -1394,6 +1546,9 @@ function loadDashboardInsights() {
       dashboardInsights.status = data.status || { total: 0, active: 0, revoked: 0 };
       dashboardInsights.topCourses = Array.isArray(data.topCourses) ? data.topCourses : [];
       dashboardInsights.topTypes = Array.isArray(data.topTypes) ? data.topTypes : [];
+      dashboardInsights.tvByCertificate = Array.isArray(data.tvByCertificate)
+        ? data.tvByCertificate
+        : [];
       if (selectedDashboardMetric) {
         renderDrillChart(selectedDashboardMetric);
       }

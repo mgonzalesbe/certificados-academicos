@@ -58,6 +58,29 @@ def crear_usuario(username, email, password, role, documento_identidad=None, nom
         raise RuntimeError("Base de datos no disponible")
     try:
         cursor = conn.cursor()
+        if role == ROLE_STUDENT and doc_db:
+            cursor.execute(
+                """
+                SELECT 1 FROM Usuarios
+                WHERE DocumentoIdentidad = ? AND Rol = ?
+                """,
+                (doc_db, ROLE_STUDENT),
+            )
+            if cursor.fetchone():
+                raise ValueError("Ya existe una cuenta con este documento de identidad")
+        cursor.execute(
+            "SELECT 1 FROM Usuarios WHERE LOWER(LTRIM(RTRIM(Correo))) = LOWER(?)",
+            (email,),
+        )
+        if cursor.fetchone():
+            raise ValueError("Ya existe un usuario con este correo electrónico")
+        cursor.execute(
+            "SELECT 1 FROM Usuarios WHERE LOWER(LTRIM(RTRIM(NombreUsuario))) = LOWER(?)",
+            (username,),
+        )
+        if cursor.fetchone():
+            raise ValueError("Ya existe un usuario con este nombre de usuario")
+
         cursor.execute(
             """
             INSERT INTO Usuarios (NombreUsuario, Correo, HashContrasena, Rol, DocumentoIdentidad, Nombres, Apellidos)
@@ -67,12 +90,18 @@ def crear_usuario(username, email, password, role, documento_identidad=None, nom
         )
         conn.commit()
         return True
+    except ValueError:
+        conn.rollback()
+        raise
     except Exception as e:
+        conn.rollback()
         msg = str(e).lower()
         if "unique" in msg or "duplicate" in msg:
             if "documento" in msg or "documentoidentidad" in msg:
                 raise ValueError("Ya existe una cuenta con este documento de identidad") from e
-            raise ValueError("Ya existe un usuario con ese nombre o correo") from e
+            if "correo" in msg or "email" in msg:
+                raise ValueError("Ya existe un usuario con este correo electrónico") from e
+            raise ValueError("Ya existe un usuario con este nombre de usuario") from e
         raise RuntimeError("No se pudo registrar el usuario") from e
     finally:
         conn.close()

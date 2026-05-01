@@ -7,6 +7,12 @@ body {
   font-family: "Inter", sans-serif;
 }
 
+/* Un solo control para mostrar contraseña: oculta el icono nativo de Edge/IE */
+input[type="password"]::-ms-reveal,
+input[type="password"]::-ms-clear {
+  display: none;
+}
+
 /* ==========================================================================
    1. COMPORTAMIENTO DE LAS VISTAS (PESTAÑAS/INTERFACES)
    ========================================================================== */

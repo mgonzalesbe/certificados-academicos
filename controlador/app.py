@@ -139,7 +139,32 @@ def auth_register():
             apellidos=datos.get('apellidos'),
         )
     except ValueError as e:
-        return jsonify({'success': False, 'error': str(e)}), 400
+        msg = str(e)
+        ml = msg.lower()
+        field_errors = {}
+        if 'documento de identidad' in ml or (
+            'documento' in ml and 'identidad' in ml
+        ):
+            field_errors['reg-doc'] = msg
+        elif 'correo electrónico' in ml or 'este correo' in ml:
+            field_errors['reg-email'] = msg
+        elif 'nombre de usuario' in ml:
+            field_errors['reg-user'] = msg
+        elif 'dni debe' in ml or '8 dígitos' in ml:
+            field_errors['reg-doc'] = msg
+        elif ('correo electrónico inválido' in ml) or (
+            'inválido' in ml and 'correo' in ml
+        ):
+            field_errors['reg-email'] = msg
+        elif 'usuario debe tener' in ml:
+            field_errors['reg-user'] = msg
+        elif 'contraseña' in ml:
+            field_errors['reg-pass'] = msg
+        return jsonify({
+            'success': False,
+            'error': msg,
+            'fieldErrors': field_errors,
+        }), 400
     except RuntimeError as e:
         return jsonify({'success': False, 'error': str(e)}), 503
     mail_sent = False
