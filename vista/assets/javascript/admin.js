@@ -134,6 +134,14 @@ studentSearch.addEventListener("focus", () => {
   }
 });
 
+function replaceCursoPlaceholderInBody(courseName) {
+  const ta = document.getElementById("input-body");
+  if (!ta) return;
+  const nm = String(courseName || "").trim();
+  if (!nm) return;
+  ta.value = ta.value.replace(/\[\[\s*CURSO\s*\]\]/gi, nm);
+}
+
 function renderCourseEmitDropdown(matches) {
   if (!courseDropdown) return;
   courseDropdown.innerHTML = "";
@@ -153,7 +161,11 @@ function renderCourseEmitDropdown(matches) {
     item.className =
       "p-3 hover:bg-gray-100 cursor-pointer border-b border-gray-100 last:border-b-0 text-sm";
     item.textContent = c.name;
-    item.onclick = () => selectCourseEmit(c);
+    // mousedown + preventDefault: evita que el input pierda el foco antes del clic (blur vaciaba el curso).
+    item.addEventListener("mousedown", (ev) => {
+      ev.preventDefault();
+      selectCourseEmit(c);
+    });
     courseDropdown.appendChild(item);
   });
   courseDropdown.classList.remove("hidden");
@@ -167,10 +179,20 @@ function selectCourseEmit(c) {
     courseSearch.classList.remove("border-red-300");
     courseSearch.classList.add("border-green-300");
   }
-  const ta = document.getElementById("input-body");
-  if (ta && ta.value.includes("[[CURSO]]")) {
-    const nm = String(c.name || "");
-    ta.value = ta.value.split("[[CURSO]]").join(nm);
+  replaceCursoPlaceholderInBody(c.name);
+}
+
+function tryCommitCourseEmitFromTypedName() {
+  if (!courseSearch || !courseHiddenId) return;
+  if (courseHiddenId.value) return;
+  const q = courseSearch.value.trim();
+  if (!q) return;
+  const ql = q.toLowerCase();
+  const exact = coursesEmitList.filter(
+    (c) => (c.name || "").trim().toLowerCase() === ql,
+  );
+  if (exact.length === 1) {
+    selectCourseEmit(exact[0]);
   }
 }
 
@@ -200,7 +222,19 @@ if (courseSearch && courseDropdown && courseHiddenId) {
       query.length > 0 ? filterCoursesEmitQuery(query) : [...coursesEmitList],
     );
   });
+  courseSearch.addEventListener("blur", () => {
+    window.setTimeout(() => tryCommitCourseEmitFromTypedName(), 200);
+  });
 }
+
+let bodyReplaceCursoTimeout;
+document.getElementById("input-body")?.addEventListener("input", () => {
+  if (!courseHiddenId?.value || !courseSearch?.value?.trim()) return;
+  clearTimeout(bodyReplaceCursoTimeout);
+  bodyReplaceCursoTimeout = window.setTimeout(() => {
+    replaceCursoPlaceholderInBody(courseSearch.value.trim());
+  }, 80);
+});
 
 function insertBodyMarker(marker) {
   const ta = document.getElementById("input-body");
