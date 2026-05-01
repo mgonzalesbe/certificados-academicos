@@ -4,6 +4,7 @@ import json
 import base64
 import uuid
 import re
+from collections import defaultdict
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.serialization import (
@@ -819,6 +820,26 @@ def obtener_estadisticas():
     }
 
 
+def _etiqueta_alumno_abreviada(nombre_completo: str) -> str:
+    """
+    Etiqueta corta para el eje X del gráfico TV: primer nombre + primer apellido
+    (heurística por palabras del nombre en el certificado).
+    """
+    parts = (nombre_completo or "").strip().split()
+    if not parts:
+        return "?"
+    if len(parts) == 1:
+        w = parts[0]
+        return w if len(w) <= 16 else (w[:15] + "…")
+    if len(parts) == 2:
+        s = f"{parts[0]} {parts[1]}"
+    elif len(parts) == 3:
+        s = f"{parts[0]} {parts[1]}"
+    else:
+        s = f"{parts[0]} {parts[-2]}"
+    return s if len(s) <= 18 else (s[:17] + "…")
+
+
 def obtener_dashboard_insights():
     """Devuelve comparativas para graficos del dashboard admin."""
     conn = get_db_connection()
@@ -848,6 +869,23 @@ def obtener_dashboard_insights():
         status_active = int(getattr(row, "Activos", 0) or 0)
         status_revoked = int(getattr(row, "Revocados", 0) or 0)
 
+        def _append_monthly_row(r, dest):
+            ag = getattr(r, "AvgGen", None)
+            av = getattr(r, "AvgVer", None)
+            dest.append(
+                {
+                    "year": int(r.Anio),
+                    "month": int(r.Mes),
+                    "label": f"{int(r.Mes):02d}/{int(r.Anio)}",
+                    "emitted": int(getattr(r, "Emitidos", 0) or 0),
+                    "active": int(getattr(r, "Activos", 0) or 0),
+                    "revoked": int(getattr(r, "Revocados", 0) or 0),
+                    "avgGen": float(ag) if ag is not None else 0.0,
+                    "avgVer": float(av) if av is not None else 0.0,
+                }
+            )
+
+        # Ventana amplia: últimos 24 meses desde el día 1 del mes actual (evita gráficos vacíos con datos antiguos)
         cursor.execute(
             """
             SELECT
@@ -859,7 +897,7 @@ def obtener_dashboard_insights():
                 AVG(CAST(TiempoGeneracionSeg AS FLOAT)) AS AvgGen,
                 AVG(CAST(TiempoVerificacionSeg AS FLOAT)) AS AvgVer
             FROM Certificados
-            WHERE FechaCreacion >= DATEADD(MONTH, -5, DATEFROMPARTS(YEAR(GETDATE()), MONTH(GETDATE()), 1))
+            WHERE FechaCreacion >= DATEADD(MONTH, -24, DATEFROMPARTS(YEAR(GETDATE()), MONTH(GETDATE()), 1))
             GROUP BY YEAR(FechaCreacion), MONTH(FechaCreacion)
             ORDER BY Anio ASC, Mes ASC
             """
@@ -867,18 +905,29 @@ def obtener_dashboard_insights():
         monthly_rows = cursor.fetchall()
         monthly = []
         for r in monthly_rows:
-            monthly.append(
-                {
-                    "year": int(r.Anio),
-                    "month": int(r.Mes),
-                    "label": f"{int(r.Mes):02d}/{int(r.Anio)}",
-                    "emitted": int(getattr(r, "Emitidos", 0) or 0),
-                    "active": int(getattr(r, "Activos", 0) or 0),
-                    "revoked": int(getattr(r, "Revocados", 0) or 0),
-                    "avgGen": float(getattr(r, "AvgGen", 0) or 0),
-                    "avgVer": float(getattr(r, "AvgVer", 0) or 0),
-                }
+            _append_monthly_row(r, monthly)
+
+        # Si no hubo filas (p. ej. certificados solo fuera de la ventana), últimos 24 meses con al menos un registro
+        if not monthly:
+            cursor.execute(
+                """
+                SELECT
+                    YEAR(c.FechaCreacion) AS Anio,
+                    MONTH(c.FechaCreacion) AS Mes,
+                    COUNT(*) AS Emitidos,
+                    SUM(CASE WHEN c.Estado = N'Activo' THEN 1 ELSE 0 END) AS Activos,
+                    SUM(CASE WHEN c.Estado = N'Revocado' THEN 1 ELSE 0 END) AS Revocados,
+                    AVG(CAST(c.TiempoGeneracionSeg AS FLOAT)) AS AvgGen,
+                    AVG(CAST(c.TiempoVerificacionSeg AS FLOAT)) AS AvgVer
+                FROM Certificados c
+                WHERE c.FechaCreacion IS NOT NULL
+                GROUP BY YEAR(c.FechaCreacion), MONTH(c.FechaCreacion)
+                ORDER BY YEAR(c.FechaCreacion) DESC, MONTH(c.FechaCreacion) DESC
+                """
             )
+            recent = list(cursor.fetchall())[:24]
+            for r in reversed(recent):
+                _append_monthly_row(r, monthly)
 
         cursor.execute(
             """
@@ -930,15 +979,21 @@ def obtener_dashboard_insights():
             """
         )
         tv_by_certificate = []
+        abbr_counts = defaultdict(int)
         for r in cursor.fetchall():
             raw_name = (getattr(r, "NombreEstudiante", None) or "").strip() or "(Sin nombre)"
             cid = int(getattr(r, "IdCertificado", 0) or 0)
-            short = raw_name if len(raw_name) <= 14 else (raw_name[:13] + "…")
+            base = _etiqueta_alumno_abreviada(raw_name)
+            abbr_counts[base] += 1
+            if abbr_counts[base] > 1:
+                label = f"{base} ({abbr_counts[base]})"
+            else:
+                label = base
             tv_by_certificate.append(
                 {
                     "id": cid,
                     "name": raw_name,
-                    "label": f"{short} (#{cid})",
+                    "label": label,
                     "tv": float(getattr(r, "TvSeg", 0) or 0),
                     "valid": bool(int(getattr(r, "EsValido", 0) or 0)),
                 }

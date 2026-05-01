@@ -482,6 +482,9 @@ function getDrillChartConfig(metricKey) {
       : 0;
   const monthly = dashboardInsights.monthly || [];
   const monthLabels = monthly.map((m) => m.label);
+  const hasMonthly = monthLabels.length > 0;
+  /** Etiqueta única cuando no hay agrupación mensual en BD (sin certificados o sin fechas). */
+  const noSeriesLabel = "Sin serie mensual";
   const avgGenSeries = monthly.map((m) => toFiniteNumber(m.avgGen));
   const avgVerSeries = monthly.map((m) => toFiniteNumber(m.avgVer));
 
@@ -512,48 +515,57 @@ function getDrillChartConfig(metricKey) {
     };
   }
   if (metricKey === "avgGen") {
+    const lineLabels = hasMonthly ? monthLabels : [noSeriesLabel];
+    const genPts = hasMonthly ? avgGenSeries : [dashboardState.avgGen];
+    const verPts = hasMonthly ? avgVerSeries : [dashboardState.avgVer];
+    const metaPoint = hasMonthly ? 0 : 4;
     return {
       title: "Tiempo de generación de certificados",
-      subtitle: "Evolución mensual de tiempos promedio vs metas sugeridas.",
+      subtitle: hasMonthly
+        ? "Evolución mensual de tiempos promedio por mes de creación del certificado vs metas sugeridas."
+        : "No hay certificados con fecha de creación agrupables por mes. Se muestran los promedios globales actuales (TGC y TV) frente a la meta.",
       kpis: [
         `Promedio actual TGC: ${dashboardState.avgGen.toFixed(4)} s`,
         `Promedio actual TV: ${dashboardState.avgVer.toFixed(4)} s`,
         "Meta sugerida TGC <= 2.00 s / TV <= 1.50 s",
+        hasMonthly ? `Meses en el gráfico: ${monthLabels.length}` : "Sin puntos mensuales: emita certificados o revise fechas en la base de datos.",
       ],
       chart: {
         type: "line",
         data: {
-          labels: monthLabels.length ? monthLabels : ["Sin datos"],
+          labels: lineLabels,
           datasets: [
             {
               label: "TGC promedio",
-              data: monthLabels.length ? avgGenSeries : [dashboardState.avgGen],
+              data: genPts,
               borderColor: "#3b82f6",
               backgroundColor: "rgba(59,130,246,0.15)",
               fill: true,
               tension: 0.35,
+              pointRadius: hasMonthly ? 3 : 5,
             },
             {
               label: "TV promedio",
-              data: monthLabels.length ? avgVerSeries : [dashboardState.avgVer],
+              data: verPts,
               borderColor: "#8b5cf6",
               backgroundColor: "rgba(139,92,246,0.10)",
               fill: true,
               tension: 0.35,
+              pointRadius: hasMonthly ? 3 : 5,
             },
             {
               label: "Meta TGC (2.00 s)",
-              data: (monthLabels.length ? monthLabels : ["Sin datos"]).map(() => 2),
+              data: lineLabels.map(() => 2),
               borderColor: "#94a3b8",
               borderDash: [6, 6],
-              pointRadius: 0,
+              pointRadius: metaPoint,
             },
             {
               label: "Meta TV (1.50 s)",
-              data: (monthLabels.length ? monthLabels : ["Sin datos"]).map(() => 1.5),
+              data: lineLabels.map(() => 1.5),
               borderColor: "#cbd5e1",
               borderDash: [4, 4],
-              pointRadius: 0,
+              pointRadius: metaPoint,
             },
           ],
         },
@@ -562,130 +574,119 @@ function getDrillChartConfig(metricKey) {
   }
   if (metricKey === "avgVer") {
     const tvList = dashboardInsights.tvByCertificate || [];
-    const hasSeries = tvList.length >= 2;
-    const monthLabs = monthLabels.length ? monthLabels : ["Sin datos"];
-    const avgVerMonth = monthLabels.length ? avgVerSeries : [dashboardState.avgVer];
-
-    if (hasSeries) {
-      const labels = tvList.map((r) => r.label);
-      const values = tvList.map((r) => toFiniteNumber(r.tv));
-      const maxEntry = tvList.reduce((a, b) =>
-        toFiniteNumber(a.tv) >= toFiniteNumber(b.tv) ? a : b,
-      );
-      const minEntry = tvList.reduce((a, b) =>
-        toFiniteNumber(a.tv) <= toFiniteNumber(b.tv) ? a : b,
-      );
-      const yTop = Math.max(...values, 1.5, dashboardState.avgVer) * 1.12;
+    if (tvList.length === 0) {
       return {
         title: "Tiempo de verificación de certificados (TV)",
         subtitle:
-          "Hasta 50 certificados recientes con TV registrado, en orden cronológico de emisión. Cada punto es la última verificación medida en ese certificado; la línea punteada es la meta sugerida.",
+          "Cada punto del gráfico corresponde a un certificado (última verificación medida). Aún no hay registros de TV por certificado; use la verificación pública con PDF para acumular datos.",
         kpis: [
-          `TV global (promedio): ${dashboardState.avgVer.toFixed(4)} s`,
-          `Mayor TV en la muestra: ${toFiniteNumber(maxEntry.tv).toFixed(4)} s — ${maxEntry.name || "(Sin nombre)"}`,
-          `Menor TV en la muestra: ${toFiniteNumber(minEntry.tv).toFixed(4)} s — ${minEntry.name || "(Sin nombre)"}`,
-          `Certificados representados: ${tvList.length}`,
+          `TV global: ${dashboardState.avgVer.toFixed(4)} s`,
+          "Meta sugerida TV <= 1.50 s",
         ],
         chart: {
           type: "line",
           data: {
-            labels,
+            labels: ["—"],
             datasets: [
               {
-                label: "TV última verificación (s)",
-                data: values,
-                borderColor: "#8b5cf6",
-                backgroundColor: "rgba(139,92,246,0.14)",
-                fill: true,
-                tension: 0.28,
-                pointRadius: 3,
-                pointHoverRadius: 6,
-              },
-              {
-                label: "Meta TV (1.50 s)",
-                data: labels.map(() => 1.5),
-                borderColor: "#94a3b8",
-                borderDash: [6, 6],
+                label: "TV (s)",
+                data: [0],
+                borderColor: "#cbd5e1",
                 pointRadius: 0,
-                fill: false,
               },
             ],
-          },
-        },
-        extraChartOptions: {
-          scales: {
-            y: { beginAtZero: true, suggestedMax: yTop },
-            x: {
-              ticks: {
-                maxRotation: 45,
-                minRotation: 0,
-                autoSkip: true,
-                maxTicksLimit: 24,
-              },
-            },
-          },
-          plugins: {
-            tooltip: {
-              callbacks: {
-                title(items) {
-                  const i = items[0]?.dataIndex;
-                  const row = tvList[i];
-                  return row ? `Certificado #${row.id}` : "";
-                },
-                label(ctx) {
-                  if (ctx.datasetIndex === 1) {
-                    return `Meta sugerida: ${Number(ctx.raw).toFixed(2)} s`;
-                  }
-                  const row = tvList[ctx.dataIndex];
-                  const v = Number(ctx.parsed.y).toFixed(4);
-                  if (!row) return `TV: ${v} s`;
-                  const ok = row.valid ? "verificación válida" : "verificación no válida";
-                  return [`TV: ${v} s`, `${row.name}`, `Última medición: ${ok}`];
-                },
-              },
-            },
           },
         },
       };
     }
 
+    const labels = tvList.map((r) => r.label);
+    const values = tvList.map((r) => toFiniteNumber(r.tv));
+    const maxEntry = tvList.reduce((a, b) =>
+      toFiniteNumber(a.tv) >= toFiniteNumber(b.tv) ? a : b,
+    );
+    const minEntry = tvList.reduce((a, b) =>
+      toFiniteNumber(a.tv) <= toFiniteNumber(b.tv) ? a : b,
+    );
+    const yTop = Math.max(...values, 1.5, dashboardState.avgVer, 0.01) * 1.15;
+    const onePoint = labels.length < 2;
+    const metaPointTv = onePoint ? 4 : 0;
+
     return {
       title: "Tiempo de verificación de certificados (TV)",
       subtitle:
-        tvList.length === 1
-          ? "Solo hay un certificado con TV registrado; se muestra el promedio mensual si existe."
-          : "Evolución mensual del TV promedio frente a la meta sugerida (1,50 s). Acumule verificaciones para ver también el detalle por certificado.",
+        "Índice por certificado (hasta 50 recientes, orden por fecha de emisión). Eje X: nombre abreviado del alumno; eje Y: tiempo de la última verificación (s). Línea de meta 1,50 s.",
       kpis: [
-        `TV global: ${dashboardState.avgVer.toFixed(4)} s`,
-        tvList.length === 1
-          ? `Único certificado con TV: ${tvList[0].name} — ${toFiniteNumber(tvList[0].tv).toFixed(4)} s`
-          : "Meta sugerida TV <= 1.50 s",
-        monthLabels.length
-          ? `Meses con datos: ${monthLabels.length}`
-          : "Sin serie mensual todavía.",
+        `TV global (promedio): ${dashboardState.avgVer.toFixed(4)} s`,
+        `Mayor TV: ${toFiniteNumber(maxEntry.tv).toFixed(4)} s — ${maxEntry.name || "(Sin nombre)"}`,
+        `Menor TV: ${toFiniteNumber(minEntry.tv).toFixed(4)} s — ${minEntry.name || "(Sin nombre)"}`,
+        `Certificados en el gráfico: ${tvList.length}`,
       ],
       chart: {
         type: "line",
         data: {
-          labels: monthLabs,
+          labels,
           datasets: [
             {
-              label: "TV promedio mensual",
-              data: avgVerMonth,
-              borderColor: "#8b5cf6",
-              backgroundColor: "rgba(139,92,246,0.14)",
+              label: "TV por certificado (s)",
+              data: values,
+              borderColor: "#dc2626",
+              backgroundColor: "rgba(220,38,38,0.06)",
+              borderWidth: 2,
               fill: true,
-              tension: 0.35,
+              tension: 0.2,
+              pointRadius: 5,
+              pointHoverRadius: 7,
+              pointStyle: "rectRot",
+              pointBackgroundColor: "#dc2626",
+              pointBorderColor: "#7f1d1d",
             },
             {
               label: "Meta TV (1.50 s)",
-              data: monthLabs.map(() => 1.5),
-              borderColor: "#94a3b8",
+              data: labels.map(() => 1.5),
+              borderColor: "#64748b",
               borderDash: [6, 6],
-              pointRadius: 0,
+              pointRadius: metaPointTv,
               fill: false,
             },
           ],
+        },
+      },
+      extraChartOptions: {
+        scales: {
+          y: { beginAtZero: true, suggestedMax: yTop },
+          x: {
+            ticks: {
+              maxRotation: 55,
+              minRotation: 30,
+              autoSkip: tvList.length > 14,
+              maxTicksLimit: 20,
+            },
+            grid: {
+              display: true,
+            },
+          },
+        },
+        plugins: {
+          tooltip: {
+            callbacks: {
+              title(items) {
+                const i = items[0]?.dataIndex;
+                const row = tvList[i];
+                return row ? `Certificado #${row.id}` : "";
+              },
+              label(ctx) {
+                if (ctx.datasetIndex === 1) {
+                  return `Meta sugerida: ${Number(ctx.raw).toFixed(2)} s`;
+                }
+                const row = tvList[ctx.dataIndex];
+                const v = Number(ctx.parsed.y).toFixed(4);
+                if (!row) return `TV: ${v} s`;
+                const ok = row.valid ? "verificación válida" : "verificación no válida";
+                return [`TV: ${v} s`, row.name || "—", `Última medición: ${ok}`];
+              },
+            },
+          },
         },
       },
     };
