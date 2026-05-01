@@ -46,20 +46,6 @@ document.getElementById("btn-logout").addEventListener("click", async () => {
   window.location.href = "/";
 });
 
-const chkMonths = document.getElementById("chk-include-months");
-const wrapMonths = document.getElementById("wrap-months");
-const inputMonths = document.getElementById("input-months");
-
-function syncMonthsUi() {
-  const on = chkMonths.checked;
-  wrapMonths.classList.toggle("hidden", !on);
-  inputMonths.required = on;
-  if (!on) inputMonths.value = "";
-}
-
-chkMonths.addEventListener("change", syncMonthsUi);
-syncMonthsUi();
-
 // Student search functionality
 const studentSearch = document.getElementById("input-student-search");
 const studentDropdown = document.getElementById("student-dropdown");
@@ -797,7 +783,6 @@ async function loadCatalogs() {
       const tr = document.createElement("tr");
       tr.innerHTML = `
         <td class="px-4 py-3 text-sm font-semibold">${c.name}</td>
-        <td class="px-4 py-3 text-center text-sm">${c.hasLogo ? "Sí" : "No"}</td>
         <td class="px-4 py-3 text-center text-sm">${c.hasLogoDerecho ? "Sí" : "No"}</td>
         <td class="px-4 py-3 text-center text-sm">${c.active ? "Sí" : "No"}</td>
         <td class="px-4 py-3 text-center text-sm"></td>
@@ -984,7 +969,6 @@ document.getElementById("form-create").addEventListener("submit", async (e) => {
   btnText.classList.add("hidden");
   btnSubmit.disabled = true;
 
-  const includeMonths = document.getElementById("chk-include-months").checked;
   const bodyTxt = document.getElementById("input-body").value.trim();
   const studentId = document.getElementById("input-student-id").value;
   const studentName = document
@@ -1006,14 +990,11 @@ document.getElementById("form-create").addEventListener("submit", async (e) => {
     name: studentName,
     date: document.getElementById("input-date").value,
     recipient_user_id: studentId,
-    include_months: includeMonths,
   };
   payload.course_id = document.getElementById("input-course-id").value;
   payload.type_id = document.getElementById("input-type").value;
   payload.centro_educativo_id = document.getElementById("input-centro-id").value;
   payload.firma_doctor_id = document.getElementById("input-firma-doctor-id").value;
-  if (includeMonths)
-    payload.months = document.getElementById("input-months").value;
   if (bodyTxt) payload.body_text = bodyTxt;
   const presetSel = document.getElementById("select-body-preset");
   if (presetSel && presetSel.value) {
@@ -1059,8 +1040,6 @@ document.getElementById("form-create").addEventListener("submit", async (e) => {
     document
       .getElementById("input-student-search")
       .classList.add("border-gray-300");
-    chkMonths.checked = false;
-    syncMonthsUi();
   } catch (err) {
     console.error(err);
     resDiv.classList.remove("hidden");
@@ -1409,25 +1388,6 @@ if (centroForm) {
       name: document.getElementById("centro-name").value.trim(),
       estado: document.getElementById("centro-estado").value,
     };
-    const fileInput = document.getElementById("centro-logo");
-    const file = fileInput && fileInput.files && fileInput.files[0];
-    if (file) {
-      if (file.size > 5 * 1024 * 1024) {
-        setMsg(msg, false, "El logo no puede superar 5 MB.");
-        return;
-      }
-      const b64 = await new Promise((resolve, reject) => {
-        const r = new FileReader();
-        r.onload = () => {
-          const s = String(r.result || "");
-          const i = s.indexOf(",");
-          resolve(i >= 0 ? s.slice(i + 1) : s);
-        };
-        r.onerror = () => reject(new Error("No se pudo leer el archivo"));
-        r.readAsDataURL(file);
-      });
-      payload.logo_base64 = b64;
-    }
     const fileDer = document.getElementById("centro-logo-derecho");
     const fileD = fileDer && fileDer.files && fileDer.files[0];
     if (fileD) {

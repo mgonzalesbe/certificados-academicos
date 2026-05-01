@@ -216,14 +216,6 @@ def validar_datos_generacion(datos):
         finally:
             conn.close()
 
-    if datos.get("include_months"):
-        try:
-            m = int(datos.get("months") or 0)
-            if m < 1 or m > 600:
-                raise ValueError()
-        except Exception:
-            raise ValueError("Si indica meses de formación, debe ser un número entre 1 y 600") from None
-
     # Validación de existencia en BD (si se envían IDs)
     if datos.get("course_id") not in (None, ""):
         conn = get_db_connection()
@@ -387,13 +379,6 @@ def _intentar_enviar_correo_certificado_asignado(
 def crear_certificado(datos_estudiante, created_by_user_id=None):
     start_time = time.perf_counter()
 
-    incluir_meses = bool(datos_estudiante.get("include_months"))
-    training_months_db = None
-    meses_pdf = None
-    if incluir_meses:
-        meses_pdf = int(datos_estudiante.get("months") or 0)
-        training_months_db = meses_pdf
-
     body_text = datos_estudiante.get("body_text")
     if body_text is not None:
         body_text = str(body_text).strip() or None
@@ -507,9 +492,6 @@ def crear_certificado(datos_estudiante, created_by_user_id=None):
             tipo_credencial=tipo_nombre,
             qr_payload=qr_payload,
             texto_cuerpo=body_text,
-            incluir_meses=incluir_meses,
-            meses=meses_pdf,
-            logo_centro_bytes=None,
             logo_derecho_bytes=logo_derecho_bytes,
             doctor_firma_bytes=doctor_firma_bytes,
             doctor_nombres=doctor_nombres,
@@ -532,10 +514,10 @@ def crear_certificado(datos_estudiante, created_by_user_id=None):
             INSERT INTO Certificados (
                 IdCertificado, NombreEstudiante, IdCurso, FechaEmision,
                 IdTipoCredencial, FirmaDigital, Estado, ContenidoPdf,
-                IdUsuarioDestinatario, IdUsuarioCreador, MesesFormacion, TextoCuerpo,
+                IdUsuarioDestinatario, IdUsuarioCreador, TextoCuerpo,
                 TiempoGeneracionSeg, IdCentroEducativo, IdFirmaDoctores, IdTextoCuerpoCatalogo
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             cert_id,
             datos_estudiante['name'],
@@ -547,7 +529,6 @@ def crear_certificado(datos_estudiante, created_by_user_id=None):
             pdf_bytes,
             recipient_id,
             created_by,
-            training_months_db,
             body_text,
             tgc,
             id_centro_educativo,
@@ -686,7 +667,7 @@ def obtener_todos_los_certificados():
         cursor = conn.cursor()
         cursor.execute("""
             SELECT c.IdCertificado, c.NombreEstudiante, cu.Nombre AS NombreCurso, tc.Nombre AS NombreTipoCredencial, c.FirmaDigital, c.Estado,
-                   c.IdUsuarioDestinatario, c.MesesFormacion,
+                   c.IdUsuarioDestinatario,
                    c.TiempoGeneracionSeg, c.TiempoVerificacionSeg, c.EsValido,
                    CASE WHEN c.ContenidoPdf IS NOT NULL AND DATALENGTH(c.ContenidoPdf) > 0 THEN 1 ELSE 0 END AS HasPdfDb
             FROM Certificados c
@@ -704,7 +685,6 @@ def obtener_todos_los_certificados():
                 "signature": row.FirmaDigital, "qrPayload": qr_payload,
                 "hasPdf": has_pdf,
                 "recipientUserId": int(rid) if rid is not None else None,
-                "months": getattr(row, "MesesFormacion", None),
                 "tgc": getattr(row, "TiempoGeneracionSeg", 0),
                 "tv": getattr(row, "TiempoVerificacionSeg", 0),
                 "isValid": bool(getattr(row, "EsValido", 0)),
@@ -972,7 +952,7 @@ def buscar_certificados(q=None, page=1, page_size=5):
         sql = f"""
             SELECT c.IdCertificado, c.NombreEstudiante, cu.Nombre AS NombreCurso, tc.Nombre AS NombreTipoCredencial,
                    c.FirmaDigital, c.Estado,
-                   c.IdUsuarioDestinatario, c.MesesFormacion,
+                   c.IdUsuarioDestinatario,
                    c.TiempoGeneracionSeg, c.TiempoVerificacionSeg, c.EsValido,
                    CASE WHEN c.ContenidoPdf IS NOT NULL AND DATALENGTH(c.ContenidoPdf) > 0 THEN 1 ELSE 0 END AS HasPdfDb
             FROM Certificados c
@@ -994,7 +974,6 @@ def buscar_certificados(q=None, page=1, page_size=5):
                 "signature": row.FirmaDigital, "qrPayload": qr_payload,
                 "hasPdf": has_pdf,
                 "recipientUserId": int(rid) if rid is not None else None,
-                "months": getattr(row, "MesesFormacion", None),
                 "tgc": getattr(row, "TiempoGeneracionSeg", 0),
                 "tv": getattr(row, "TiempoVerificacionSeg", 0),
                 "isValid": bool(getattr(row, "EsValido", 0)),

@@ -197,10 +197,7 @@ def generar_pdf_diploma(
     tipo_credencial: str,
     qr_payload: str,
     texto_cuerpo: str | None = None,
-    incluir_meses: bool = False,
-    meses: int | None = None,
     *,
-    logo_centro_bytes: bytes | None = None,
     logo_derecho_bytes: bytes | None = None,
     doctor_firma_bytes: bytes | None = None,
     doctor_nombres: str | None = None,
@@ -210,7 +207,7 @@ def generar_pdf_diploma(
     """
     Diploma horizontal: plantilla de página (env o PNG/JPG en assets), cabecera con logos,
     títulos, cuerpo, firma y QR. Sin plantilla solo se deja el fondo blanco (el marco va en la imagen).
-    `logo_centro_bytes` se ignora: el logo izquierdo es el archivo estático regional.
+    El logo izquierdo es el archivo estático regional (assets).
     """
     w, h = landscape(A4)
     c = canvas.Canvas(dest, pagesize=(w, h))
@@ -261,13 +258,6 @@ def generar_pdf_diploma(
     c.setFillColor(colors.black)
     y = _wrap_centered_lines(c, body, cx, y, inner_w, FONT_SERIF_ITALIC, body_size, leading)
     y -= 0.48 * cm
-
-    # Sin línea «Fecha de emisión» en el PDF (solicitud explícita). Opcional: solo meses si aplica.
-    if incluir_meses and meses is not None:
-        c.setFont(FONT_SANS, FONT_META_SIZE)
-        c.setFillColor(colors.black)
-        c.drawCentredString(cx, y, f"Duración referencial: {meses} mes(es)")
-        y -= 0.55 * cm
 
     # --- Firma central (imagen + Dr./Dra. + cargo fijo) ---
     # Un poco más arriba para dejar sitio al QR centrado bajo el cargo
@@ -339,10 +329,7 @@ def generar_pdf_diploma_bytes(
     tipo_credencial: str,
     qr_payload: str,
     texto_cuerpo: str | None = None,
-    incluir_meses: bool = False,
-    meses: int | None = None,
     *,
-    logo_centro_bytes: bytes | None = None,
     logo_derecho_bytes: bytes | None = None,
     doctor_firma_bytes: bytes | None = None,
     doctor_nombres: str | None = None,
@@ -360,9 +347,6 @@ def generar_pdf_diploma_bytes(
         tipo_credencial=tipo_credencial,
         qr_payload=qr_payload,
         texto_cuerpo=texto_cuerpo,
-        incluir_meses=incluir_meses,
-        meses=meses,
-        logo_centro_bytes=logo_centro_bytes,
         logo_derecho_bytes=logo_derecho_bytes,
         doctor_firma_bytes=doctor_firma_bytes,
         doctor_nombres=doctor_nombres,

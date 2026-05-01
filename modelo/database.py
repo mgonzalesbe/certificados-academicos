@@ -351,7 +351,6 @@ def _migrate_certificados_columns(cursor):
     _rename_if_exists(cursor, "Certificados", "PdfContent", "ContenidoPdf")
     _rename_if_exists(cursor, "Certificados", "RecipientUserId", "IdUsuarioDestinatario")
     _rename_if_exists(cursor, "Certificados", "CreatedByUserId", "IdUsuarioCreador")
-    _rename_if_exists(cursor, "Certificados", "TrainingMonths", "MesesFormacion")
     _rename_if_exists(cursor, "Certificados", "BodyText", "TextoCuerpo")
     if not _column_exists(cursor, "Certificados", "IdCurso"):
         cursor.execute("ALTER TABLE Certificados ADD IdCurso INT NULL")
@@ -372,6 +371,7 @@ def _migrate_certificados_columns(cursor):
     if not _column_exists(cursor, "Certificados", "IdTextoCuerpoCatalogo"):
         cursor.execute("ALTER TABLE Certificados ADD IdTextoCuerpoCatalogo INT NULL")
     _drop_horas_formacion_columns(cursor)
+    _drop_meses_formacion_columns(cursor)
 
 
 def _drop_horas_formacion_columns(cursor):
@@ -379,6 +379,18 @@ def _drop_horas_formacion_columns(cursor):
     if not _table_exists(cursor, "Certificados"):
         return
     for col in ("HorasFormacion", "TrainingHours"):
+        if _column_exists(cursor, "Certificados", col):
+            try:
+                cursor.execute(f"ALTER TABLE Certificados DROP COLUMN {col}")
+            except Exception as e:
+                print(f"No se pudo eliminar columna Certificados.{col}: {e}")
+
+
+def _drop_meses_formacion_columns(cursor):
+    """Elimina meses de formación (no se usan en el diploma actual)."""
+    if not _table_exists(cursor, "Certificados"):
+        return
+    for col in ("MesesFormacion", "TrainingMonths"):
         if _column_exists(cursor, "Certificados", col):
             try:
                 cursor.execute(f"ALTER TABLE Certificados DROP COLUMN {col}")
@@ -400,7 +412,6 @@ def _create_certificados_fresh(cursor):
             ContenidoPdf VARBINARY(MAX) NULL,
             IdUsuarioDestinatario INT NULL,
             IdUsuarioCreador INT NULL,
-            MesesFormacion INT NULL,
             TextoCuerpo NVARCHAR(MAX) NULL,
             FechaCreacion DATETIME2 NOT NULL DEFAULT SYSDATETIME(),
             TiempoGeneracionSeg FLOAT NULL,
@@ -471,6 +482,11 @@ def _migrate_centro_educativo_columns(cursor):
         return
     if not _column_exists(cursor, "CentroEducativo", "LogoDerecho"):
         cursor.execute("ALTER TABLE CentroEducativo ADD LogoDerecho VARBINARY(MAX) NULL")
+    if _column_exists(cursor, "CentroEducativo", "Logo"):
+        try:
+            cursor.execute("ALTER TABLE CentroEducativo DROP COLUMN Logo")
+        except Exception as e:
+            print(f"No se pudo eliminar columna CentroEducativo.Logo: {e}")
 
 
 def _ensure_centro_educativo(cursor):
@@ -479,7 +495,6 @@ def _ensure_centro_educativo(cursor):
             """
             CREATE TABLE CentroEducativo (
                 IdCentroEducativo INT IDENTITY(1,1) NOT NULL PRIMARY KEY,
-                Logo VARBINARY(MAX) NULL,
                 LogoDerecho VARBINARY(MAX) NULL,
                 Nombre NVARCHAR(200) NOT NULL,
                 Estado NVARCHAR(20) NOT NULL DEFAULT N'Activo',
@@ -520,8 +535,8 @@ def _seed_centro_educativo_default(cursor):
         return
     cursor.execute(
         """
-        INSERT INTO CentroEducativo (Logo, Nombre, Estado)
-        VALUES (NULL, N'Institución predeterminada', N'Activo')
+        INSERT INTO CentroEducativo (Nombre, Estado)
+        VALUES (N'Institución predeterminada', N'Activo')
         """
     )
 

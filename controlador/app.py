@@ -607,7 +607,6 @@ def admin_list_centros_educativos():
         cursor.execute(
             """
             SELECT IdCentroEducativo, Nombre, Estado,
-                   CASE WHEN Logo IS NOT NULL AND DATALENGTH(Logo) > 0 THEN 1 ELSE 0 END AS HasLogo,
                    CASE WHEN LogoDerecho IS NOT NULL AND DATALENGTH(LogoDerecho) > 0 THEN 1 ELSE 0 END AS HasLogoDerecho
             FROM CentroEducativo
             ORDER BY Nombre ASC
@@ -619,7 +618,6 @@ def admin_list_centros_educativos():
                 "id": int(row.IdCentroEducativo),
                 "name": row.Nombre,
                 "active": (row.Estado or "").strip().lower() == "activo",
-                "hasLogo": bool(getattr(row, "HasLogo", 0)),
                 "hasLogoDerecho": bool(getattr(row, "HasLogoDerecho", 0)),
             })
         return jsonify({"success": True, "centers": rows})
@@ -640,20 +638,6 @@ def admin_create_centro_educativo():
     estado = (datos.get("estado") or "Activo").strip()
     if estado not in ("Activo", "Inactivo"):
         return jsonify({"success": False, "error": "Estado debe ser Activo o Inactivo"}), 400
-    logo_bin = None
-    b64 = datos.get("logo_base64")
-    if b64:
-        try:
-            raw = base64.b64decode(str(b64).strip())
-        except Exception:
-            return jsonify({"success": False, "error": "logo_base64 no es Base64 válido"}), 400
-        if len(raw) > 5 * 1024 * 1024:
-            return jsonify({"success": False, "error": "El logo no puede superar 5 MB"}), 400
-        try:
-            logo_bin = strip_uniform_background_to_png(raw)
-        except Exception:
-            logo_bin = raw
-
     logo_derecho_bin = None
     b64d = datos.get("logo_derecho_base64")
     if b64d:
@@ -675,10 +659,10 @@ def admin_create_centro_educativo():
         cursor = conn.cursor()
         cursor.execute(
             """
-            INSERT INTO CentroEducativo (Logo, LogoDerecho, Nombre, Estado)
-            VALUES (?, ?, ?, ?)
+            INSERT INTO CentroEducativo (LogoDerecho, Nombre, Estado)
+            VALUES (?, ?, ?)
             """,
-            (logo_bin, logo_derecho_bin, name, estado),
+            (logo_derecho_bin, name, estado),
         )
         conn.commit()
         return jsonify({"success": True})
