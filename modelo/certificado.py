@@ -450,7 +450,7 @@ def crear_certificado(datos_estudiante, created_by_user_id=None):
         )
     except Exception as e:
         pdf_error = str(e)
-        print(f"⚠ Error generando PDF: {e}")
+        print(f"ADVERTENCIA: Error generando PDF: {e}")
 
     # Calcular TGC antes de guardar en la BD para que el valor esté disponible
     end_time = time.perf_counter()

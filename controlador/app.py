@@ -785,8 +785,8 @@ if __name__ == '__main__':
     _host = os.environ.get('FLASK_HOST', '0.0.0.0')
 
     print("\n" + "=" * 60)
-    print("🚀 SISTEMA DE CERTIFICADOS — panel admin / alumno")
-    print(f"👉 http://127.0.0.1:{_port}")
+    print("SISTEMA DE CERTIFICADOS -- panel admin / alumno")
+    print(f"http://127.0.0.1:{_port}")
     print("   Usuario inicial: admin  (defina ADMIN_DEFAULT_PASSWORD o use Admin123!)")
     print("=" * 60 + "\n")
 
