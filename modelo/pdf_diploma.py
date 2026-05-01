@@ -133,18 +133,18 @@ def generar_pdf_diploma(
     incluir_meses: bool = False,
     meses: int | None = None,
     *,
-    centro_nombre: str | None = None,
     logo_centro_bytes: bytes | None = None,
+    logo_derecho_bytes: bytes | None = None,
+    doctor_firma_bytes: bytes | None = None,
+    doctor_nombres: str | None = None,
+    doctor_genero: str | None = None,
 ):
     """
-    Diploma horizontal estilo «reconocimiento»: logos superior, institución, título,
-    «Otorgado a», nombre, cuerpo en cursiva, firma central y QR de verificación.
+    Diploma horizontal estilo «reconocimiento»: logos superior, textos institucionales
+    fijos (Hospital Distrital de Laredo / Reconocimiento), «Otorgado a», cuerpo, firma
+    manuscrita del director (tabla FirmaDoctores) y QR.
 
-    Datos dinámicos desde la web: nombre, tipo_credencial, texto_cuerpo (párrafo),
-    curso/fecha en apoyo; centro_nombre y logo_centro_bytes desde CentroEducativo.
-
-    Firmante: variables CERT_FIRMANTE_NOMBRE y CERT_FIRMANTE_CARGO (opcional).
-    Logo derecho: archivos logo_secundario.png / logo_upao.png / logo_derecha.png en assets.
+    Logos: izquierda desde centro (Logo); derecha desde LogoDerecho del centro o assets.
     """
     w, h = landscape(A4)
     c = canvas.Canvas(dest, pagesize=(w, h))
@@ -186,14 +186,22 @@ def generar_pdf_diploma(
             _draw_scaled_image(c, left_ir, left_x, y_header_top, max_logo_w, max_logo_h, "left"),
         )
 
-    right_path = _asset_path(
-        "logo_secundario.png",
-        "logo_upao.png",
-        "logo_derecha.png",
-        "logo_institucion.png",
-    )
-    if right_path:
-        right_ir = ImageReader(right_path)
+    right_ir = None
+    if logo_derecho_bytes:
+        try:
+            right_ir = ImageReader(io.BytesIO(logo_derecho_bytes))
+        except Exception:
+            right_ir = None
+    if right_ir is None:
+        right_path = _asset_path(
+            "logo_secundario.png",
+            "logo_upao.png",
+            "logo_derecha.png",
+            "logo_institucion.png",
+        )
+        if right_path:
+            right_ir = ImageReader(right_path)
+    if right_ir:
         y_below_logos = min(
             y_below_logos,
             _draw_scaled_image(c, right_ir, right_x, y_header_top, max_logo_w, max_logo_h, "right"),
@@ -201,11 +209,9 @@ def generar_pdf_diploma(
 
     y = y_below_logos - 0.35 * cm
 
-    # Institución (nombre del centro educativo o texto por defecto)
-    inst = (centro_nombre or os.environ.get("CERT_INSTITUCION_LINE") or "Institución educativa").strip().upper()
+    inst = "HOSPITAL DISTRITAL DE LAREDO"
     c.setFillColor(colors.black)
     c.setFont("Helvetica-Bold", 10.5)
-    # Tamaño adaptable si el nombre es largo
     fs = 10.5
     while fs >= 8 and c.stringWidth(inst, "Helvetica-Bold", fs) > inner_w:
         fs -= 0.5
@@ -213,26 +219,17 @@ def generar_pdf_diploma(
     c.drawCentredString(cx, y, inst)
     y -= 0.85 * cm
 
-    # Título del documento = tipo de credencial (ej. RECONOCIMIENTO)
-    titulo = (tipo_credencial or "Certificado").strip().upper()
-    titulo_size = 22 if len(titulo) <= 36 else 18 if len(titulo) <= 52 else 15
+    titulo = "RECONOCIMIENTO"
+    titulo_size = 22
     c.setFont("Helvetica-Bold", titulo_size)
     title_leading = titulo_size * 1.15
-    if c.stringWidth(titulo, "Helvetica-Bold", titulo_size) <= inner_w:
-        c.drawCentredString(cx, y, titulo)
-        y -= title_leading
-    else:
-        y = _wrap_centered_lines(
-            c, titulo, cx, y, inner_w, "Helvetica-Bold", titulo_size, title_leading
-        )
-        y -= 0.25 * cm
-
+    c.drawCentredString(cx, y, titulo)
+    y -= title_leading
     y -= 0.35 * cm
 
-    # «Otorgado a :» (izquierda, cursiva)
     c.setFillColor(colors.black)
     c.setFont("Times-Italic", 12)
-    c.drawString(margin_x, y, "Otorgado a :")
+    c.drawString(margin_x, y, "Otorgado a:")
     y -= 0.75 * cm
 
     # Nombre del beneficiario
@@ -274,24 +271,41 @@ def generar_pdf_diploma(
     c.drawCentredString(cx, y, "   ·   ".join(meta_parts))
     y -= 0.65 * cm
 
-    # --- Firma central (estilo diploma de referencia) ---
-    firmante = (os.environ.get("CERT_FIRMANTE_NOMBRE") or "").strip()
-    cargo = (os.environ.get("CERT_FIRMANTE_CARGO") or "").strip()
-    sig_line_y = 2.85 * cm
+    # --- Firma central (imagen + Dr./Dra. + cargo fijo) ---
+    line_y = 2.85 * cm
     line_half = 4.2 * cm
+    max_sig_w, max_sig_h = 4.8 * cm, 2.1 * cm
+    if doctor_firma_bytes:
+        try:
+            ir_sig = ImageReader(io.BytesIO(doctor_firma_bytes))
+            iw, ih = ir_sig.getSize()
+            sc = min(max_sig_w / float(iw), max_sig_h / float(ih))
+            sw, sh = iw * sc, ih * sc
+            c.drawImage(
+                ir_sig,
+                cx - sw / 2,
+                line_y + 0.12 * cm,
+                width=sw,
+                height=sh,
+                mask="auto",
+            )
+        except Exception:
+            pass
+
     c.setStrokeColor(colors.black)
     c.setLineWidth(0.6)
-    c.line(cx - line_half, sig_line_y, cx + line_half, sig_line_y)
+    c.line(cx - line_half, line_y, cx + line_half, line_y)
 
-    ty = sig_line_y + 0.35 * cm
-    if firmante:
-        c.setFont("Helvetica", 9)
+    gen = (doctor_genero or "").strip()
+    pref = "Dr. " if gen == "Masculino" else "Dra. " if gen == "Femenino" else ""
+    nom_doc = (doctor_nombres or "").strip()
+    firmante_line = (pref + nom_doc).strip() or (os.environ.get("CERT_FIRMANTE_NOMBRE") or "").strip()
+    if firmante_line:
+        c.setFont("Helvetica", 9.5)
         c.setFillColor(colors.black)
-        c.drawCentredString(cx, ty, firmante)
-        ty += 0.38 * cm
-    if cargo:
-        c.setFont("Helvetica-Bold", 8.5)
-        c.drawCentredString(cx, ty, cargo.upper())
+        c.drawCentredString(cx, line_y - 0.42 * cm, firmante_line)
+    c.setFont("Helvetica-Bold", 8.5)
+    c.drawCentredString(cx, line_y - 0.82 * cm, "DIRECTOR DEL HOSPITAL DISTRITAL DE LAREDO")
 
     # --- QR verificación (esquina inferior derecha) ---
     qr = qrcode.QRCode(version=None, box_size=3, border=1)
@@ -334,8 +348,11 @@ def generar_pdf_diploma_bytes(
     incluir_meses: bool = False,
     meses: int | None = None,
     *,
-    centro_nombre: str | None = None,
     logo_centro_bytes: bytes | None = None,
+    logo_derecho_bytes: bytes | None = None,
+    doctor_firma_bytes: bytes | None = None,
+    doctor_nombres: str | None = None,
+    doctor_genero: str | None = None,
 ) -> bytes:
     """Genera el PDF en memoria (para guardar en SQL Server VARBINARY)."""
     buf = io.BytesIO()
@@ -351,7 +368,10 @@ def generar_pdf_diploma_bytes(
         texto_cuerpo=texto_cuerpo,
         incluir_meses=incluir_meses,
         meses=meses,
-        centro_nombre=centro_nombre,
         logo_centro_bytes=logo_centro_bytes,
+        logo_derecho_bytes=logo_derecho_bytes,
+        doctor_firma_bytes=doctor_firma_bytes,
+        doctor_nombres=doctor_nombres,
+        doctor_genero=doctor_genero,
     )
     return buf.getvalue()

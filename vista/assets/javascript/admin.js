@@ -156,6 +156,7 @@ const interfaces = document.querySelectorAll(".interface");
 const courseSelect = document.getElementById("input-course-id");
 const typeSelect = document.getElementById("input-type");
 const centroSelect = document.getElementById("input-centro-id");
+const firmaDoctorSelect = document.getElementById("input-firma-doctor-id");
 
 navBtns.forEach((btn) => {
   btn.addEventListener("click", () => {
@@ -181,6 +182,7 @@ navBtns.forEach((btn) => {
       loadCoursesIntoSelect().catch(() => {});
       loadTypesIntoSelect().catch(() => {});
       loadCentrosIntoSelect().catch(() => {});
+      loadFirmaDoctoresIntoSelect().catch(() => {});
     }
     if (targetId === "catalogs") loadCatalogs();
   });
@@ -623,6 +625,20 @@ async function loadCentrosIntoSelect() {
   });
 }
 
+async function loadFirmaDoctoresIntoSelect() {
+  if (!firmaDoctorSelect) return;
+  firmaDoctorSelect.innerHTML = `<option value="">Cargando directores...</option>`;
+  const data = await fetchJson("/api/admin/firma-doctores");
+  const rows = (data.doctors || []).filter((d) => d.active);
+  firmaDoctorSelect.innerHTML = `<option value="">Seleccione director...</option>`;
+  rows.forEach((d) => {
+    const opt = document.createElement("option");
+    opt.value = String(d.id);
+    opt.textContent = d.nombres || `ID ${d.id}`;
+    firmaDoctorSelect.appendChild(opt);
+  });
+}
+
 async function loadCatalogs() {
   const coursesBody = document.getElementById("table-courses");
   const typesBody = document.getElementById("table-ctypes");
@@ -631,11 +647,13 @@ async function loadCatalogs() {
     await loadCoursesIntoSelect().catch(() => {});
     await loadTypesIntoSelect().catch(() => {});
     await loadCentrosIntoSelect().catch(() => {});
+    await loadFirmaDoctoresIntoSelect().catch(() => {});
     return;
   }
   const courses = (await fetchJson("/api/admin/courses")).courses || [];
   const types = (await fetchJson("/api/admin/credential-types")).types || [];
   const centros = (await fetchJson("/api/admin/centros-educativos")).centers || [];
+  const doctors = (await fetchJson("/api/admin/firma-doctores")).doctors || [];
 
   coursesBody.replaceChildren();
   courses.forEach((c) => {
@@ -698,6 +716,7 @@ async function loadCatalogs() {
       tr.innerHTML = `
         <td class="px-4 py-3 text-sm font-semibold">${c.name}</td>
         <td class="px-4 py-3 text-center text-sm">${c.hasLogo ? "Sí" : "No"}</td>
+        <td class="px-4 py-3 text-center text-sm">${c.hasLogoDerecho ? "Sí" : "No"}</td>
         <td class="px-4 py-3 text-center text-sm">${c.active ? "Sí" : "No"}</td>
         <td class="px-4 py-3 text-center text-sm"></td>
       `;
@@ -721,9 +740,42 @@ async function loadCatalogs() {
     });
   }
 
+  const doctorsBody = document.getElementById("table-firma-doctores");
+  if (doctorsBody) {
+    doctorsBody.replaceChildren();
+    doctors.forEach((d) => {
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td class="px-4 py-3 text-sm font-semibold">${d.nombres || ""}</td>
+        <td class="px-4 py-3 text-center text-sm">${d.genero || ""}</td>
+        <td class="px-4 py-3 text-center text-sm">${d.hasFirma ? "Sí" : "No"}</td>
+        <td class="px-4 py-3 text-center text-sm">${d.active ? "Sí" : "No"}</td>
+        <td class="px-4 py-3 text-center text-sm"></td>
+      `;
+      const actionsTd = tr.lastElementChild;
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = d.active
+        ? "px-3 py-1 rounded-lg font-semibold text-white bg-red-600 hover:bg-red-700"
+        : "px-3 py-1 rounded-lg font-semibold text-white bg-green-600 hover:bg-green-700";
+      btn.textContent = d.active ? "Deshabilitar" : "Habilitar";
+      btn.addEventListener("click", () =>
+        changeCatalogStatus({
+          kind: "doctor",
+          id: d.id,
+          name: d.nombres || String(d.id),
+          currentActive: d.active,
+        }),
+      );
+      actionsTd.appendChild(btn);
+      doctorsBody.appendChild(tr);
+    });
+  }
+
   await loadCoursesIntoSelect();
   await loadTypesIntoSelect();
   await loadCentrosIntoSelect();
+  await loadFirmaDoctoresIntoSelect();
 }
 
 async function changeCatalogStatus({ kind, id, name, currentActive }) {
@@ -733,20 +785,26 @@ async function changeCatalogStatus({ kind, id, name, currentActive }) {
       ? "curso"
       : kind === "centro"
         ? "centro educativo"
-        : "tipo de credencial";
+        : kind === "doctor"
+          ? "director"
+          : "tipo de credencial";
   const actionLabel = nextActive ? "habilitar" : "deshabilitar";
   const endpoint =
     kind === "course"
       ? `/api/admin/courses/${id}/active`
       : kind === "centro"
         ? `/api/admin/centros-educativos/${id}/active`
-        : `/api/admin/credential-types/${id}/active`;
+        : kind === "doctor"
+          ? `/api/admin/firma-doctores/${id}/active`
+          : `/api/admin/credential-types/${id}/active`;
   const msgEl = document.getElementById(
     kind === "course"
       ? "courses-msg"
       : kind === "centro"
         ? "centros-msg"
-        : "ctypes-msg",
+        : kind === "doctor"
+          ? "firma-doctor-msg"
+          : "ctypes-msg",
   );
 
   const accepted = await ModalUtil.show(
@@ -866,6 +924,7 @@ document.getElementById("form-create").addEventListener("submit", async (e) => {
   payload.course_id = document.getElementById("input-course-id").value;
   payload.type_id = document.getElementById("input-type").value;
   payload.centro_educativo_id = document.getElementById("input-centro-id").value;
+  payload.firma_doctor_id = document.getElementById("input-firma-doctor-id").value;
   if (includeMonths)
     payload.months = document.getElementById("input-months").value;
   if (bodyTxt) payload.body_text = bodyTxt;
@@ -1245,6 +1304,25 @@ if (centroForm) {
       });
       payload.logo_base64 = b64;
     }
+    const fileDer = document.getElementById("centro-logo-derecho");
+    const fileD = fileDer && fileDer.files && fileDer.files[0];
+    if (fileD) {
+      if (fileD.size > 5 * 1024 * 1024) {
+        setMsg(msg, false, "El logo derecho no puede superar 5 MB.");
+        return;
+      }
+      const b64d = await new Promise((resolve, reject) => {
+        const r = new FileReader();
+        r.onload = () => {
+          const s = String(r.result || "");
+          const i = s.indexOf(",");
+          resolve(i >= 0 ? s.slice(i + 1) : s);
+        };
+        r.onerror = () => reject(new Error("No se pudo leer el archivo"));
+        r.readAsDataURL(fileD);
+      });
+      payload.logo_derecho_base64 = b64d;
+    }
     try {
       await fetchJson("/api/admin/centros-educativos", {
         method: "POST",
@@ -1254,9 +1332,65 @@ if (centroForm) {
       setMsg(msg, true, "Centro educativo agregado correctamente.");
       e.target.reset();
       document.getElementById("centro-estado").value = "Activo";
+      const ld = document.getElementById("centro-logo-derecho");
+      if (ld) ld.value = "";
       await loadCatalogs();
     } catch (err) {
       setMsg(msg, false, err.message || "Error");
+    }
+  });
+}
+
+const firmaDoctorForm = document.getElementById("form-new-firma-doctor");
+if (firmaDoctorForm) {
+  firmaDoctorForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const msg = document.getElementById("firma-doctor-msg");
+    msg.classList.add("hidden");
+    const payload = {
+      nombres: document.getElementById("firma-doctor-nombres").value.trim(),
+      genero: document.getElementById("firma-doctor-genero").value,
+      estado: document.getElementById("firma-doctor-estado").value,
+    };
+    if (!payload.genero) {
+      setMsg(msg, false, "Seleccione el género.");
+      msg.classList.remove("hidden");
+      return;
+    }
+    const fin = document.getElementById("firma-doctor-archivo");
+    const f = fin && fin.files && fin.files[0];
+    if (f) {
+      if (f.size > 5 * 1024 * 1024) {
+        setMsg(msg, false, "La imagen no puede superar 5 MB.");
+        msg.classList.remove("hidden");
+        return;
+      }
+      const b64 = await new Promise((resolve, reject) => {
+        const r = new FileReader();
+        r.onload = () => {
+          const s = String(r.result || "");
+          const i = s.indexOf(",");
+          resolve(i >= 0 ? s.slice(i + 1) : s);
+        };
+        r.onerror = () => reject(new Error("No se pudo leer el archivo"));
+        r.readAsDataURL(f);
+      });
+      payload.firma_base64 = b64;
+    }
+    try {
+      await fetchJson("/api/admin/firma-doctores", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      setMsg(msg, true, "Director registrado correctamente.");
+      msg.classList.remove("hidden");
+      e.target.reset();
+      document.getElementById("firma-doctor-estado").value = "Activo";
+      await loadCatalogs();
+    } catch (err) {
+      setMsg(msg, false, err.message || "Error");
+      msg.classList.remove("hidden");
     }
   });
 }

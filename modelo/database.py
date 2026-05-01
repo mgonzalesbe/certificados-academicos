@@ -368,6 +368,8 @@ def _migrate_certificados_columns(cursor):
         cursor.execute("ALTER TABLE Certificados ADD EsValido BIT NULL")
     if not _column_exists(cursor, "Certificados", "IdCentroEducativo"):
         cursor.execute("ALTER TABLE Certificados ADD IdCentroEducativo INT NULL")
+    if not _column_exists(cursor, "Certificados", "IdFirmaDoctores"):
+        cursor.execute("ALTER TABLE Certificados ADD IdFirmaDoctores INT NULL")
 
 
 def _create_certificados_fresh(cursor):
@@ -391,7 +393,8 @@ def _create_certificados_fresh(cursor):
             TiempoGeneracionSeg FLOAT NULL,
             TiempoVerificacionSeg FLOAT NULL,
             EsValido BIT NULL,
-            IdCentroEducativo INT NULL
+            IdCentroEducativo INT NULL,
+            IdFirmaDoctores INT NULL
         )
         """
     )
@@ -426,6 +429,19 @@ def _ensure_certificados(cursor):
         CREATE NONCLUSTERED INDEX IX_Certificados_IdCentroEducativo ON Certificados(IdCentroEducativo)
         """
     )
+    cursor.execute(
+        """
+        IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'IX_Certificados_IdFirmaDoctores' AND object_id = OBJECT_ID(N'Certificados'))
+        CREATE NONCLUSTERED INDEX IX_Certificados_IdFirmaDoctores ON Certificados(IdFirmaDoctores)
+        """
+    )
+
+
+def _migrate_centro_educativo_columns(cursor):
+    if not _table_exists(cursor, "CentroEducativo"):
+        return
+    if not _column_exists(cursor, "CentroEducativo", "LogoDerecho"):
+        cursor.execute("ALTER TABLE CentroEducativo ADD LogoDerecho VARBINARY(MAX) NULL")
 
 
 def _ensure_centro_educativo(cursor):
@@ -435,6 +451,7 @@ def _ensure_centro_educativo(cursor):
             CREATE TABLE CentroEducativo (
                 IdCentroEducativo INT IDENTITY(1,1) NOT NULL PRIMARY KEY,
                 Logo VARBINARY(MAX) NULL,
+                LogoDerecho VARBINARY(MAX) NULL,
                 Nombre NVARCHAR(200) NOT NULL,
                 Estado NVARCHAR(20) NOT NULL DEFAULT N'Activo',
                 CONSTRAINT CK_CentroEducativo_Estado CHECK (Estado IN (N'Activo', N'Inactivo')),
@@ -442,6 +459,26 @@ def _ensure_centro_educativo(cursor):
             )
             """
         )
+    else:
+        _migrate_centro_educativo_columns(cursor)
+
+
+def _ensure_firma_doctores(cursor):
+    if _table_exists(cursor, "FirmaDoctores"):
+        return
+    cursor.execute(
+        """
+        CREATE TABLE FirmaDoctores (
+            IdFirmaDoctores INT IDENTITY(1,1) NOT NULL PRIMARY KEY,
+            Firma VARBINARY(MAX) NULL,
+            Estado NVARCHAR(20) NOT NULL DEFAULT N'Activo',
+            Nombres NVARCHAR(200) NOT NULL,
+            Genero NVARCHAR(20) NOT NULL,
+            CONSTRAINT CK_FirmaDoctores_Estado CHECK (Estado IN (N'Activo', N'Inactivo')),
+            CONSTRAINT CK_FirmaDoctores_Genero CHECK (Genero IN (N'Masculino', N'Femenino'))
+        )
+        """
+    )
 
 
 def _seed_centro_educativo_default(cursor):
@@ -555,6 +592,13 @@ def _ensure_foreign_keys_certificados(cursor):
         """
         ALTER TABLE Certificados ADD CONSTRAINT FK_Certificados_CentroEducativo
         FOREIGN KEY (IdCentroEducativo) REFERENCES CentroEducativo(IdCentroEducativo)
+        """,
+    )
+    add_fk(
+        "FK_Certificados_FirmaDoctores",
+        """
+        ALTER TABLE Certificados ADD CONSTRAINT FK_Certificados_FirmaDoctores
+        FOREIGN KEY (IdFirmaDoctores) REFERENCES FirmaDoctores(IdFirmaDoctores)
         """,
     )
 
@@ -788,6 +832,7 @@ def init_db():
         _ensure_estadisticas(cursor)
         _ensure_certificados(cursor)
         _ensure_centro_educativo(cursor)
+        _ensure_firma_doctores(cursor)
         _seed_centro_educativo_default(cursor)
         _drop_inscripciones_legacy(cursor)
         _ensure_auditoria(cursor)
@@ -801,7 +846,7 @@ def init_db():
         conn.commit()
         print(
             "Esquema verificado: TiposCredencial, Cursos, Usuarios, EstadisticasAplicacion, "
-            "Certificados, CentroEducativo, AuditoriaCertificados."
+            "Certificados, CentroEducativo, FirmaDoctores, AuditoriaCertificados."
         )
     except Exception as e:
         print(f"Error al crear o migrar tablas: {e}")

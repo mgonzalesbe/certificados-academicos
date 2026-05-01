@@ -262,6 +262,31 @@ def validar_datos_generacion(datos):
     finally:
         conn.close()
 
+    if datos.get("firma_doctor_id") in (None, ""):
+        raise ValueError("Debe indicar la firma del director (firma_doctor_id)")
+    try:
+        id_fd = int(datos.get("firma_doctor_id"))
+        if id_fd < 1:
+            raise ValueError()
+    except Exception:
+        raise ValueError("«firma_doctor_id» debe ser un entero positivo") from None
+    conn = get_db_connection()
+    if not conn:
+        raise RuntimeError("Base de datos no disponible")
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT 1 FROM FirmaDoctores
+            WHERE IdFirmaDoctores = ? AND Estado = N'Activo'
+            """,
+            (id_fd,),
+        )
+        if cursor.fetchone() is None:
+            raise ValueError("Firma de director no válida o inactiva")
+    finally:
+        conn.close()
+
 
 stats_tesis = {
     'totalGenTime': 0.0, 'genCount': 0,
@@ -365,12 +390,16 @@ def crear_certificado(datos_estudiante, created_by_user_id=None):
     id_curso = int(datos_estudiante["course_id"]) if datos_estudiante.get("course_id") not in (None, "") else None
     id_tipo_credencial = int(datos_estudiante["type_id"]) if datos_estudiante.get("type_id") not in (None, "") else None
     id_centro_educativo = int(datos_estudiante["centro_educativo_id"])
+    id_firma_doctores = int(datos_estudiante["firma_doctor_id"])
 
     # Resolver nombres finales (para PDF/firma) desde BD si hay IDs
     curso_nombre = (datos_estudiante.get("course") or "").strip() or None
     tipo_nombre = (datos_estudiante.get("type") or "").strip() or None
-    centro_nombre = None
     logo_centro_bytes = None
+    logo_derecho_bytes = None
+    doctor_firma_bytes = None
+    doctor_nombres = None
+    doctor_genero = None
     conn = get_db_connection()
     if not conn:
         raise RuntimeError("No se pudo conectar a la base de datos para resolver catálogos")
@@ -393,7 +422,7 @@ def crear_certificado(datos_estudiante, created_by_user_id=None):
             tipo_nombre = str(r.Nombre)
         cursor.execute(
             """
-            SELECT Nombre, Logo FROM CentroEducativo
+            SELECT Nombre, Logo, LogoDerecho FROM CentroEducativo
             WHERE IdCentroEducativo = ? AND Estado = N'Activo'
             """,
             (id_centro_educativo,),
@@ -401,12 +430,33 @@ def crear_certificado(datos_estudiante, created_by_user_id=None):
         cr = cursor.fetchone()
         if not cr:
             raise ValueError("Centro educativo no válido o inactivo")
-        centro_nombre = str(cr.Nombre)
         raw_logo = getattr(cr, "Logo", None)
         if raw_logo is not None:
             logo_centro_bytes = bytes(raw_logo) if not isinstance(raw_logo, (bytes, bytearray)) else bytes(raw_logo)
             if len(logo_centro_bytes) == 0:
                 logo_centro_bytes = None
+        raw_ld = getattr(cr, "LogoDerecho", None)
+        if raw_ld is not None:
+            logo_derecho_bytes = bytes(raw_ld) if not isinstance(raw_ld, (bytes, bytearray)) else bytes(raw_ld)
+            if len(logo_derecho_bytes) == 0:
+                logo_derecho_bytes = None
+        cursor.execute(
+            """
+            SELECT Firma, Nombres, Genero FROM FirmaDoctores
+            WHERE IdFirmaDoctores = ? AND Estado = N'Activo'
+            """,
+            (id_firma_doctores,),
+        )
+        dr = cursor.fetchone()
+        if not dr:
+            raise ValueError("Firma de director no válida o inactiva")
+        doctor_nombres = str(dr.Nombres or "").strip()
+        doctor_genero = str(dr.Genero or "").strip()
+        raw_f = getattr(dr, "Firma", None)
+        if raw_f is not None:
+            doctor_firma_bytes = bytes(raw_f) if not isinstance(raw_f, (bytes, bytearray)) else bytes(raw_f)
+            if len(doctor_firma_bytes) == 0:
+                doctor_firma_bytes = None
     finally:
         conn.close()
 
@@ -445,8 +495,11 @@ def crear_certificado(datos_estudiante, created_by_user_id=None):
             texto_cuerpo=body_text,
             incluir_meses=incluir_meses,
             meses=meses_pdf,
-            centro_nombre=centro_nombre,
             logo_centro_bytes=logo_centro_bytes,
+            logo_derecho_bytes=logo_derecho_bytes,
+            doctor_firma_bytes=doctor_firma_bytes,
+            doctor_nombres=doctor_nombres,
+            doctor_genero=doctor_genero,
         )
     except Exception as e:
         pdf_error = str(e)
@@ -466,9 +519,9 @@ def crear_certificado(datos_estudiante, created_by_user_id=None):
                 IdCertificado, NombreEstudiante, IdCurso, FechaEmision,
                 IdTipoCredencial, FirmaDigital, Estado, ContenidoPdf,
                 IdUsuarioDestinatario, IdUsuarioCreador, HorasFormacion, MesesFormacion, TextoCuerpo,
-                TiempoGeneracionSeg, IdCentroEducativo
+                TiempoGeneracionSeg, IdCentroEducativo, IdFirmaDoctores
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             cert_id,
             datos_estudiante['name'],
@@ -485,6 +538,7 @@ def crear_certificado(datos_estudiante, created_by_user_id=None):
             body_text,
             tgc,
             id_centro_educativo,
+            id_firma_doctores,
         ))
         cursor.execute(
             """
