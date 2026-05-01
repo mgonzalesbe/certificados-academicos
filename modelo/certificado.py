@@ -826,7 +826,7 @@ def obtener_estadisticas():
 
 def _etiqueta_alumno_abreviada(nombre_completo: str) -> str:
     """
-    Etiqueta corta para el eje X del gráfico TV: primer nombre + primer apellido
+    Etiqueta corta para el eje X de gráficos por certificado (TV / TGC): primer nombre + primer apellido
     (heurística por palabras del nombre en el certificado).
     """
     parts = (nombre_completo or "").strip().split()
@@ -853,6 +853,7 @@ def obtener_dashboard_insights():
         "topCourses": [],
         "topTypes": [],
         "tvByCertificate": [],
+        "genByCertificate": [],
     }
     if not conn:
         return default_payload
@@ -1018,6 +1019,47 @@ def obtener_dashboard_insights():
                 }
             )
 
+        cursor.execute(
+            """
+            SELECT x.IdCertificado, x.NombreEstudiante, x.TgcSeg, x.TieneTgc
+            FROM (
+                SELECT TOP 50
+                    c.IdCertificado,
+                    c.NombreEstudiante,
+                    c.TiempoGeneracionSeg AS TgcSeg,
+                    CAST(CASE WHEN c.TiempoGeneracionSeg IS NULL THEN 0 ELSE 1 END AS INT) AS TieneTgc,
+                    c.FechaCreacion
+                FROM Certificados c
+                WHERE c.FechaCreacion IS NOT NULL
+                ORDER BY c.FechaCreacion DESC, c.IdCertificado DESC
+            ) AS x
+            ORDER BY x.FechaCreacion ASC, x.IdCertificado ASC
+            """
+        )
+        gen_by_certificate = []
+        gen_abbr_counts = defaultdict(int)
+        for r in cursor.fetchall():
+            raw_name = (getattr(r, "NombreEstudiante", None) or "").strip() or "(Sin nombre)"
+            cid = getattr(r, "IdCertificado", None)
+            cid = str(cid) if cid is not None else ""
+            tgc_raw = getattr(r, "TgcSeg", None)
+            tiene_tgc = bool(int(getattr(r, "TieneTgc", 0) or 0))
+            base = _etiqueta_alumno_abreviada(raw_name)
+            gen_abbr_counts[base] += 1
+            if gen_abbr_counts[base] > 1:
+                label = f"{base} ({gen_abbr_counts[base]})"
+            else:
+                label = base
+            gen_by_certificate.append(
+                {
+                    "id": cid,
+                    "name": raw_name,
+                    "label": label,
+                    "tgc": float(tgc_raw) if tiene_tgc and tgc_raw is not None else 0.0,
+                    "hasTgc": tiene_tgc,
+                }
+            )
+
         return {
             "monthly": monthly,
             "status": {
@@ -1028,6 +1070,7 @@ def obtener_dashboard_insights():
             "topCourses": top_courses,
             "topTypes": top_types,
             "tvByCertificate": tv_by_certificate,
+            "genByCertificate": gen_by_certificate,
         }
     except Exception:
         return default_payload

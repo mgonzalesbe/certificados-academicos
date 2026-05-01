@@ -451,6 +451,7 @@ const dashboardInsights = {
   topCourses: [],
   topTypes: [],
   tvByCertificate: [],
+  genByCertificate: [],
 };
 
 function toFiniteNumber(value) {
@@ -473,6 +474,39 @@ function renderChartKpis(items) {
     item.textContent = txt;
     wrap.appendChild(item);
   });
+}
+
+/**
+ * Eje Y en segundos, centrado en los datos reales (sin forzar 0–2 s por la meta).
+ * Si todos los valores son muy inferiores a la meta, la serie de meta se omite en el gráfico
+ * (sigue indicada en los KPI).
+ */
+function tightDrillYAxis(values) {
+  const nums = values.map(toFiniteNumber).filter((n) => Number.isFinite(n) && n >= 0);
+  if (nums.length === 0) {
+    return { yMin: 0, yMax: 0.1 };
+  }
+  let vmin = Math.min(...nums);
+  let vmax = Math.max(...nums);
+  if (vmin === vmax) {
+    vmin = Math.max(0, vmin * 0.9);
+    vmax = vmax * 1.15 + 0.01;
+  }
+  const span = Math.max(vmax - vmin, 0.003);
+  const pad = Math.max(span * 0.4, vmax * 0.06, 0.003);
+  const yMin = Math.max(0, vmin - pad);
+  let yMax = vmax + pad;
+  if (yMax - yMin < 0.015) {
+    yMax = yMin + 0.05;
+  }
+  return { yMin, yMax };
+}
+
+function yTickSecondsLabel(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return String(value);
+  if (Math.abs(n) < 10 && !Number.isInteger(n)) return n.toFixed(3);
+  return String(n);
 }
 
 function getDrillChartConfig(metricKey) {
@@ -515,15 +549,166 @@ function getDrillChartConfig(metricKey) {
     };
   }
   if (metricKey === "avgGen") {
+    const genList = dashboardInsights.genByCertificate || [];
+    if (genList.length > 0) {
+      const labels = genList.map((r) => r.label);
+      const values = genList.map((r) => toFiniteNumber(r.tgc));
+      const maxEntry = genList.reduce((a, b) =>
+        toFiniteNumber(a.tgc) >= toFiniteNumber(b.tgc) ? a : b,
+      );
+      const minEntry = genList.reduce((a, b) =>
+        toFiniteNumber(a.tgc) <= toFiniteNumber(b.tgc) ? a : b,
+      );
+      const { yMin, yMax } = tightDrillYAxis(values);
+      const showMetaTgc = yMax >= 2 * 0.55;
+      const onePoint = labels.length < 2;
+      const metaPt = onePoint ? 4 : 0;
+      const tgcDatasets = [
+        {
+          label: "TGC por certificado (s)",
+          data: values,
+          borderColor: "#2563eb",
+          backgroundColor: "rgba(37,99,235,0.08)",
+          borderWidth: 2,
+          fill: true,
+          tension: 0.2,
+          pointRadius: 5,
+          pointHoverRadius: 7,
+          pointStyle: "rectRot",
+          pointBackgroundColor: "#2563eb",
+          pointBorderColor: "#1e3a8a",
+        },
+      ];
+      if (showMetaTgc) {
+        tgcDatasets.push({
+          label: "Meta TGC (2.00 s)",
+          data: labels.map(() => 2),
+          borderColor: "#64748b",
+          borderDash: [6, 6],
+          pointRadius: metaPt,
+          fill: false,
+        });
+      }
+      return {
+        title: "Tiempo de generación de certificados",
+        subtitle:
+          "Índice por certificado (hasta 50 recientes, orden por emisión). Eje X: alumno abreviado; eje Y: tiempo de generación TGC (s). Escala acotada a los datos; meta 2,00 s solo si entra en el rango visible.",
+        kpis: [
+          `TGC global (promedio): ${dashboardState.avgGen.toFixed(4)} s`,
+          `Mayor TGC en la muestra: ${toFiniteNumber(maxEntry.tgc).toFixed(4)} s — ${maxEntry.name || "(Sin nombre)"}`,
+          `Menor TGC en la muestra: ${toFiniteNumber(minEntry.tgc).toFixed(4)} s — ${minEntry.name || "(Sin nombre)"}`,
+          `Certificados en el gráfico: ${genList.length}`,
+          `TV global: ${dashboardState.avgVer.toFixed(4)} s (meta TV ≤ 1,50 s)`,
+        ],
+        chart: {
+          type: "line",
+          data: {
+            labels,
+            datasets: tgcDatasets,
+          },
+        },
+        extraChartOptions: {
+          scales: {
+            y: {
+              beginAtZero: false,
+              min: yMin,
+              max: yMax,
+              ticks: {
+                maxTicksLimit: 8,
+                callback: yTickSecondsLabel,
+              },
+            },
+            x: {
+              ticks: {
+                maxRotation: 55,
+                minRotation: 30,
+                autoSkip: genList.length > 14,
+                maxTicksLimit: 20,
+              },
+            },
+          },
+          plugins: {
+            tooltip: {
+              callbacks: {
+                title(items) {
+                  const i = items[0]?.dataIndex;
+                  const row = genList[i];
+                  return row ? `Certificado #${row.id}` : "";
+                },
+                label(ctx) {
+                  if (ctx.datasetIndex > 0) {
+                    return `Meta sugerida: ${Number(ctx.raw).toFixed(2)} s`;
+                  }
+                  const row = genList[ctx.dataIndex];
+                  const v = Number(ctx.parsed.y).toFixed(4);
+                  if (!row) return `TGC: ${v} s`;
+                  if (!row.hasTgc) {
+                    return [
+                      "TGC: — (sin medición)",
+                      row.name || "—",
+                      "Este registro no tiene tiempo de generación guardado.",
+                    ];
+                  }
+                  return [`TGC: ${v} s`, row.name || "—"];
+                },
+              },
+            },
+          },
+        },
+      };
+    }
+
     const lineLabels = hasMonthly ? monthLabels : [noSeriesLabel];
     const genPts = hasMonthly ? avgGenSeries : [dashboardState.avgGen];
     const verPts = hasMonthly ? avgVerSeries : [dashboardState.avgVer];
     const metaPoint = hasMonthly ? 0 : 4;
+    const combinedMonthly = [...genPts, ...verPts];
+    const { yMin: yMMin, yMax: yMMax } = tightDrillYAxis(combinedMonthly);
+    const showMetaTgcM = yMMax >= 2 * 0.55;
+    const showMetaTvM = yMMax >= 1.5 * 0.55;
+    const monthlyDatasets = [
+      {
+        label: "TGC promedio",
+        data: genPts,
+        borderColor: "#3b82f6",
+        backgroundColor: "rgba(59,130,246,0.15)",
+        fill: true,
+        tension: 0.35,
+        pointRadius: hasMonthly ? 3 : 5,
+      },
+      {
+        label: "TV promedio",
+        data: verPts,
+        borderColor: "#8b5cf6",
+        backgroundColor: "rgba(139,92,246,0.10)",
+        fill: true,
+        tension: 0.35,
+        pointRadius: hasMonthly ? 3 : 5,
+      },
+    ];
+    if (showMetaTgcM) {
+      monthlyDatasets.push({
+        label: "Meta TGC (2.00 s)",
+        data: lineLabels.map(() => 2),
+        borderColor: "#94a3b8",
+        borderDash: [6, 6],
+        pointRadius: metaPoint,
+      });
+    }
+    if (showMetaTvM) {
+      monthlyDatasets.push({
+        label: "Meta TV (1.50 s)",
+        data: lineLabels.map(() => 1.5),
+        borderColor: "#cbd5e1",
+        borderDash: [4, 4],
+        pointRadius: metaPoint,
+      });
+    }
     return {
       title: "Tiempo de generación de certificados",
       subtitle: hasMonthly
-        ? "Evolución mensual de tiempos promedio por mes de creación del certificado vs metas sugeridas."
-        : "No hay certificados con fecha de creación agrupables por mes. Se muestran los promedios globales actuales (TGC y TV) frente a la meta.",
+        ? "Evolución mensual de tiempos promedio por mes de creación del certificado. Escala Y acotada a los datos; líneas de meta solo si entran en el rango."
+        : "No hay certificados con fecha de creación agrupables por mes. Se muestran los promedios globales actuales (TGC y TV).",
       kpis: [
         `Promedio actual TGC: ${dashboardState.avgGen.toFixed(4)} s`,
         `Promedio actual TV: ${dashboardState.avgVer.toFixed(4)} s`,
@@ -534,40 +719,20 @@ function getDrillChartConfig(metricKey) {
         type: "line",
         data: {
           labels: lineLabels,
-          datasets: [
-            {
-              label: "TGC promedio",
-              data: genPts,
-              borderColor: "#3b82f6",
-              backgroundColor: "rgba(59,130,246,0.15)",
-              fill: true,
-              tension: 0.35,
-              pointRadius: hasMonthly ? 3 : 5,
+          datasets: monthlyDatasets,
+        },
+      },
+      extraChartOptions: {
+        scales: {
+          y: {
+            beginAtZero: false,
+            min: yMMin,
+            max: yMMax,
+            ticks: {
+              maxTicksLimit: 8,
+              callback: yTickSecondsLabel,
             },
-            {
-              label: "TV promedio",
-              data: verPts,
-              borderColor: "#8b5cf6",
-              backgroundColor: "rgba(139,92,246,0.10)",
-              fill: true,
-              tension: 0.35,
-              pointRadius: hasMonthly ? 3 : 5,
-            },
-            {
-              label: "Meta TGC (2.00 s)",
-              data: lineLabels.map(() => 2),
-              borderColor: "#94a3b8",
-              borderDash: [6, 6],
-              pointRadius: metaPoint,
-            },
-            {
-              label: "Meta TV (1.50 s)",
-              data: lineLabels.map(() => 1.5),
-              borderColor: "#cbd5e1",
-              borderDash: [4, 4],
-              pointRadius: metaPoint,
-            },
-          ],
+          },
         },
       },
     };
@@ -608,14 +773,41 @@ function getDrillChartConfig(metricKey) {
     const minEntry = tvList.reduce((a, b) =>
       toFiniteNumber(a.tv) <= toFiniteNumber(b.tv) ? a : b,
     );
-    const yTop = Math.max(...values, 1.5, dashboardState.avgVer, 0.01) * 1.15;
+    const { yMin: yMinTv, yMax: yMaxTv } = tightDrillYAxis(values);
+    const showMetaTv = yMaxTv >= 1.5 * 0.55;
     const onePoint = labels.length < 2;
     const metaPointTv = onePoint ? 4 : 0;
+    const tvDatasets = [
+      {
+        label: "TV por certificado (s)",
+        data: values,
+        borderColor: "#dc2626",
+        backgroundColor: "rgba(220,38,38,0.06)",
+        borderWidth: 2,
+        fill: true,
+        tension: 0.2,
+        pointRadius: 5,
+        pointHoverRadius: 7,
+        pointStyle: "rectRot",
+        pointBackgroundColor: "#dc2626",
+        pointBorderColor: "#7f1d1d",
+      },
+    ];
+    if (showMetaTv) {
+      tvDatasets.push({
+        label: "Meta TV (1.50 s)",
+        data: labels.map(() => 1.5),
+        borderColor: "#64748b",
+        borderDash: [6, 6],
+        pointRadius: metaPointTv,
+        fill: false,
+      });
+    }
 
     return {
       title: "Tiempo de verificación de certificados (TV)",
       subtitle:
-        "Índice por certificado (hasta 50 recientes, orden por fecha de emisión). Eje X: nombre abreviado del alumno; eje Y: TV de la última verificación con PDF (0 si aún no se ha verificado).",
+        "Índice por certificado (hasta 50 recientes, orden por fecha de emisión). Eje X: nombre abreviado del alumno; eje Y: TV (s), escala acotada a los datos; meta 1,50 s solo si entra en el rango visible.",
       kpis: [
         `TV global (promedio): ${dashboardState.avgVer.toFixed(4)} s`,
         `Mayor TV: ${toFiniteNumber(maxEntry.tv).toFixed(4)} s — ${maxEntry.name || "(Sin nombre)"}`,
@@ -626,35 +818,20 @@ function getDrillChartConfig(metricKey) {
         type: "line",
         data: {
           labels,
-          datasets: [
-            {
-              label: "TV por certificado (s)",
-              data: values,
-              borderColor: "#dc2626",
-              backgroundColor: "rgba(220,38,38,0.06)",
-              borderWidth: 2,
-              fill: true,
-              tension: 0.2,
-              pointRadius: 5,
-              pointHoverRadius: 7,
-              pointStyle: "rectRot",
-              pointBackgroundColor: "#dc2626",
-              pointBorderColor: "#7f1d1d",
-            },
-            {
-              label: "Meta TV (1.50 s)",
-              data: labels.map(() => 1.5),
-              borderColor: "#64748b",
-              borderDash: [6, 6],
-              pointRadius: metaPointTv,
-              fill: false,
-            },
-          ],
+          datasets: tvDatasets,
         },
       },
       extraChartOptions: {
         scales: {
-          y: { beginAtZero: true, suggestedMax: yTop },
+          y: {
+            beginAtZero: false,
+            min: yMinTv,
+            max: yMaxTv,
+            ticks: {
+              maxTicksLimit: 8,
+              callback: yTickSecondsLabel,
+            },
+          },
           x: {
             ticks: {
               maxRotation: 55,
@@ -676,7 +853,7 @@ function getDrillChartConfig(metricKey) {
                 return row ? `Certificado #${row.id}` : "";
               },
               label(ctx) {
-                if (ctx.datasetIndex === 1) {
+                if (ctx.datasetIndex > 0) {
                   return `Meta sugerida: ${Number(ctx.raw).toFixed(2)} s`;
                 }
                 const row = tvList[ctx.dataIndex];
@@ -1556,6 +1733,9 @@ function loadDashboardInsights() {
       dashboardInsights.topTypes = Array.isArray(data.topTypes) ? data.topTypes : [];
       dashboardInsights.tvByCertificate = Array.isArray(data.tvByCertificate)
         ? data.tvByCertificate
+        : [];
+      dashboardInsights.genByCertificate = Array.isArray(data.genByCertificate)
+        ? data.genByCertificate
         : [];
       if (selectedDashboardMetric) {
         renderDrillChart(selectedDashboardMetric);
