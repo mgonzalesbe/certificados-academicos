@@ -142,6 +142,20 @@ function replaceCursoPlaceholderInBody(courseName) {
   ta.value = ta.value.replace(/\[\[\s*CURSO\s*\]\]/gi, nm);
 }
 
+function applyCourseComboboxVisualState(state) {
+  const wrap = document.getElementById("course-combobox");
+  if (!wrap) return;
+  wrap.classList.remove("border-gray-300", "border-green-500", "border-red-400");
+  if (state === "ok") wrap.classList.add("border-green-500");
+  else if (state === "error") wrap.classList.add("border-red-400");
+  else wrap.classList.add("border-gray-300");
+}
+
+function setCourseListboxOpen(open) {
+  const inp = document.getElementById("input-course-search");
+  if (inp) inp.setAttribute("aria-expanded", open ? "true" : "false");
+}
+
 function renderCourseEmitDropdown(matches) {
   if (!courseDropdown) return;
   courseDropdown.innerHTML = "";
@@ -154,6 +168,7 @@ function renderCourseEmitDropdown(matches) {
         : "No hay coincidencias. Siga escribiendo o elija de la lista.";
     courseDropdown.appendChild(noResults);
     courseDropdown.classList.remove("hidden");
+    setCourseListboxOpen(true);
     return;
   }
   matches.forEach((c) => {
@@ -169,16 +184,15 @@ function renderCourseEmitDropdown(matches) {
     courseDropdown.appendChild(item);
   });
   courseDropdown.classList.remove("hidden");
+  setCourseListboxOpen(true);
 }
 
 function selectCourseEmit(c) {
   if (courseHiddenId) courseHiddenId.value = String(c.id);
   if (courseSearch) courseSearch.value = c.name;
   if (courseDropdown) courseDropdown.classList.add("hidden");
-  if (courseSearch) {
-    courseSearch.classList.remove("border-red-300");
-    courseSearch.classList.add("border-green-300");
-  }
+  setCourseListboxOpen(false);
+  applyCourseComboboxVisualState("ok");
   replaceCursoPlaceholderInBody(c.name);
 }
 
@@ -205,11 +219,12 @@ function filterCoursesEmitQuery(query) {
 if (courseSearch && courseDropdown && courseHiddenId) {
   courseSearch.addEventListener("input", () => {
     courseHiddenId.value = "";
-    courseSearch.classList.remove("border-green-300");
+    applyCourseComboboxVisualState("default");
     const query = courseSearch.value.trim();
     clearTimeout(courseSearchTimeout);
     if (query.length === 0) {
       courseDropdown.classList.add("hidden");
+      setCourseListboxOpen(false);
       return;
     }
     courseSearchTimeout = setTimeout(() => {
@@ -224,6 +239,16 @@ if (courseSearch && courseDropdown && courseHiddenId) {
   });
   courseSearch.addEventListener("blur", () => {
     window.setTimeout(() => tryCommitCourseEmitFromTypedName(), 200);
+  });
+
+  document.getElementById("btn-course-dropdown")?.addEventListener("mousedown", (ev) => {
+    ev.preventDefault();
+    ev.stopPropagation();
+    courseSearch.focus();
+    const q = courseSearch.value.trim();
+    renderCourseEmitDropdown(
+      q.length > 0 ? filterCoursesEmitQuery(q) : [...coursesEmitList],
+    );
   });
 }
 
@@ -272,13 +297,15 @@ document.addEventListener("click", (e) => {
   ) {
     studentDropdown.classList.add("hidden");
   }
+  const courseCombobox = document.getElementById("course-combobox");
   if (
-    courseSearch &&
+    courseCombobox &&
     courseDropdown &&
-    !courseSearch.contains(e.target) &&
+    !courseCombobox.contains(e.target) &&
     !courseDropdown.contains(e.target)
   ) {
     courseDropdown.classList.add("hidden");
+    setCourseListboxOpen(false);
   }
 });
 
@@ -721,12 +748,12 @@ async function loadCoursesIntoSelect() {
   if (!searchEl || !hiddenEl) return;
   hiddenEl.value = "";
   searchEl.value = "";
-  searchEl.classList.remove("border-green-300", "border-red-300");
-  searchEl.classList.add("border-gray-300");
+  applyCourseComboboxVisualState("default");
   if (dropdownEl) {
     dropdownEl.classList.add("hidden");
     dropdownEl.innerHTML = "";
   }
+  setCourseListboxOpen(false);
   searchEl.placeholder = "Cargando cursos…";
   try {
     const data = await fetchJson("/api/admin/courses");
@@ -737,7 +764,7 @@ async function loadCoursesIntoSelect() {
     coursesEmitList = [];
   }
   searchEl.placeholder = coursesEmitList.length
-    ? "Escriba para buscar y elija un curso de la lista…"
+    ? "Buscar curso o pulse ▾ para ver todos…"
     : "No hay cursos activos. Agréguelos en Catálogos.";
 }
 
@@ -1155,8 +1182,7 @@ document.getElementById("form-create").addEventListener("submit", async (e) => {
     btnSpinner.classList.add("hidden");
     btnText.classList.remove("hidden");
     btnSubmit.disabled = false;
-    const cs = document.getElementById("input-course-search");
-    if (cs) cs.classList.add("border-red-300");
+    applyCourseComboboxVisualState("error");
     return;
   }
 

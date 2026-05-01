@@ -283,18 +283,37 @@
               <label class="block text-sm font-semibold text-gray-700 mb-1">
                 Programa / actividad / curso
               </label>
-              <input
-                type="text"
-                id="input-course-search"
-                required
-                autocomplete="off"
-                class="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
-                placeholder="Escriba para buscar y elija un curso de la lista…"
-              />
+              <div
+                id="course-combobox"
+                class="flex rounded-lg border border-gray-300 bg-white overflow-hidden shadow-sm focus-within:ring-2 focus-within:ring-blue-500 focus-within:border-blue-400"
+              >
+                <input
+                  type="text"
+                  id="input-course-search"
+                  required
+                  autocomplete="off"
+                  role="combobox"
+                  aria-autocomplete="list"
+                  aria-expanded="false"
+                  aria-controls="course-dropdown"
+                  class="flex-1 min-w-0 border-0 p-3 outline-none text-gray-900 placeholder:text-gray-400"
+                  placeholder="Buscar curso o pulse ▾ para ver todos…"
+                />
+                <button
+                  type="button"
+                  id="btn-course-dropdown"
+                  class="shrink-0 px-3 border-l border-gray-200 bg-gray-50 text-gray-600 hover:bg-gray-100 flex items-center justify-center min-w-[2.75rem]"
+                  title="Abrir lista de cursos (catálogo)"
+                  aria-label="Abrir lista de cursos del catálogo"
+                >
+                  <span class="text-xl leading-none font-bold select-none" aria-hidden="true">▾</span>
+                </button>
+              </div>
               <input type="hidden" id="input-course-id" value="" />
               <div
                 id="course-dropdown"
-                class="absolute z-10 w-full bg-white border border-gray-300 rounded-lg shadow-lg max-h-60 overflow-y-auto hidden"
+                role="listbox"
+                class="absolute z-20 left-0 right-0 top-full mt-1 w-full bg-white border border-gray-300 rounded-lg shadow-lg max-h-60 overflow-y-auto hidden"
               ></div>
               <p class="text-xs text-gray-500 mt-1">
                 Debe elegir un curso de la lista (no basta con escribir el nombre a mano).
