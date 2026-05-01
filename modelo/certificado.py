@@ -1,6 +1,7 @@
 import os
 import time
 import json
+from datetime import datetime
 import base64
 import uuid
 import re
@@ -511,6 +512,7 @@ def crear_certificado(datos_estudiante, created_by_user_id=None):
     # Calcular TGC antes de guardar en la BD para que el valor esté disponible
     end_time = time.perf_counter()
     tgc = end_time - start_time
+    fecha_creacion = datetime.now()
 
     conn = get_db_connection()
     if not conn:
@@ -522,9 +524,10 @@ def crear_certificado(datos_estudiante, created_by_user_id=None):
                 IdCertificado, NombreEstudiante, IdCurso, FechaEmision,
                 IdTipoCredencial, FirmaDigital, Estado, ContenidoPdf,
                 IdUsuarioDestinatario, IdUsuarioCreador, TextoCuerpo,
-                TiempoGeneracionSeg, IdCentroEducativo, IdFirmaDoctores, IdTextoCuerpoCatalogo
+                TiempoGeneracionSeg, IdCentroEducativo, IdFirmaDoctores, IdTextoCuerpoCatalogo,
+                FechaCreacion
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             cert_id,
             datos_estudiante['name'],
@@ -541,6 +544,7 @@ def crear_certificado(datos_estudiante, created_by_user_id=None):
             id_centro_educativo,
             id_firma_doctores,
             id_texto_cuerpo_catalogo,
+            fecha_creacion,
         ))
         cursor.execute(
             """
@@ -885,49 +889,59 @@ def obtener_dashboard_insights():
                 }
             )
 
-        # Ventana amplia: últimos 24 meses desde el día 1 del mes actual (evita gráficos vacíos con datos antiguos)
+        # Agrupación mensual por FechaCreacion: últimos 24 meses con emisión (sin ventana fija que deje fuera datos)
         cursor.execute(
             """
             SELECT
-                YEAR(FechaCreacion) AS Anio,
-                MONTH(FechaCreacion) AS Mes,
+                YEAR(c.FechaCreacion) AS Anio,
+                MONTH(c.FechaCreacion) AS Mes,
                 COUNT(*) AS Emitidos,
-                SUM(CASE WHEN Estado = N'Activo' THEN 1 ELSE 0 END) AS Activos,
-                SUM(CASE WHEN Estado = N'Revocado' THEN 1 ELSE 0 END) AS Revocados,
-                AVG(CAST(TiempoGeneracionSeg AS FLOAT)) AS AvgGen,
-                AVG(CAST(TiempoVerificacionSeg AS FLOAT)) AS AvgVer
-            FROM Certificados
-            WHERE FechaCreacion >= DATEADD(MONTH, -24, DATEFROMPARTS(YEAR(GETDATE()), MONTH(GETDATE()), 1))
-            GROUP BY YEAR(FechaCreacion), MONTH(FechaCreacion)
-            ORDER BY Anio ASC, Mes ASC
+                SUM(CASE WHEN c.Estado = N'Activo' THEN 1 ELSE 0 END) AS Activos,
+                SUM(CASE WHEN c.Estado = N'Revocado' THEN 1 ELSE 0 END) AS Revocados,
+                AVG(CAST(c.TiempoGeneracionSeg AS FLOAT)) AS AvgGen,
+                AVG(CAST(c.TiempoVerificacionSeg AS FLOAT)) AS AvgVer
+            FROM Certificados c
+            WHERE c.FechaCreacion IS NOT NULL
+            GROUP BY YEAR(c.FechaCreacion), MONTH(c.FechaCreacion)
+            ORDER BY YEAR(c.FechaCreacion) DESC, MONTH(c.FechaCreacion) DESC
             """
         )
-        monthly_rows = cursor.fetchall()
+        recent_months = list(cursor.fetchall())[:24]
         monthly = []
-        for r in monthly_rows:
+        for r in reversed(recent_months):
             _append_monthly_row(r, monthly)
 
-        # Si no hubo filas (p. ej. certificados solo fuera de la ventana), últimos 24 meses con al menos un registro
-        if not monthly:
+        # Certificados antiguos sin FechaCreacion (si la columna admite NULL): asignar fecha para que entren en el gráfico
+        if not monthly and status_total > 0:
             cursor.execute(
                 """
-                SELECT
-                    YEAR(c.FechaCreacion) AS Anio,
-                    MONTH(c.FechaCreacion) AS Mes,
-                    COUNT(*) AS Emitidos,
-                    SUM(CASE WHEN c.Estado = N'Activo' THEN 1 ELSE 0 END) AS Activos,
-                    SUM(CASE WHEN c.Estado = N'Revocado' THEN 1 ELSE 0 END) AS Revocados,
-                    AVG(CAST(c.TiempoGeneracionSeg AS FLOAT)) AS AvgGen,
-                    AVG(CAST(c.TiempoVerificacionSeg AS FLOAT)) AS AvgVer
-                FROM Certificados c
-                WHERE c.FechaCreacion IS NOT NULL
-                GROUP BY YEAR(c.FechaCreacion), MONTH(c.FechaCreacion)
-                ORDER BY YEAR(c.FechaCreacion) DESC, MONTH(c.FechaCreacion) DESC
+                UPDATE Certificados
+                SET FechaCreacion = SYSUTCDATETIME()
+                WHERE FechaCreacion IS NULL
                 """
             )
-            recent = list(cursor.fetchall())[:24]
-            for r in reversed(recent):
-                _append_monthly_row(r, monthly)
+            if cursor.rowcount:
+                conn.commit()
+                cursor.execute(
+                    """
+                    SELECT
+                        YEAR(c.FechaCreacion) AS Anio,
+                        MONTH(c.FechaCreacion) AS Mes,
+                        COUNT(*) AS Emitidos,
+                        SUM(CASE WHEN c.Estado = N'Activo' THEN 1 ELSE 0 END) AS Activos,
+                        SUM(CASE WHEN c.Estado = N'Revocado' THEN 1 ELSE 0 END) AS Revocados,
+                        AVG(CAST(c.TiempoGeneracionSeg AS FLOAT)) AS AvgGen,
+                        AVG(CAST(c.TiempoVerificacionSeg AS FLOAT)) AS AvgVer
+                    FROM Certificados c
+                    WHERE c.FechaCreacion IS NOT NULL
+                    GROUP BY YEAR(c.FechaCreacion), MONTH(c.FechaCreacion)
+                    ORDER BY YEAR(c.FechaCreacion) DESC, MONTH(c.FechaCreacion) DESC
+                    """
+                )
+                recent_months = list(cursor.fetchall())[:24]
+                monthly = []
+                for r in reversed(recent_months):
+                    _append_monthly_row(r, monthly)
 
         cursor.execute(
             """
@@ -963,16 +977,17 @@ def obtener_dashboard_insights():
 
         cursor.execute(
             """
-            SELECT x.IdCertificado, x.NombreEstudiante, x.TvSeg, x.EsValido
+            SELECT x.IdCertificado, x.NombreEstudiante, x.TvSeg, x.EsValido, x.TieneTv
             FROM (
                 SELECT TOP 50
                     c.IdCertificado,
                     c.NombreEstudiante,
-                    CAST(c.TiempoVerificacionSeg AS FLOAT) AS TvSeg,
+                    c.TiempoVerificacionSeg AS TvSeg,
                     CAST(ISNULL(c.EsValido, 0) AS INT) AS EsValido,
-                    c.FechaCreacion
+                    c.FechaCreacion,
+                    CAST(CASE WHEN c.TiempoVerificacionSeg IS NULL THEN 0 ELSE 1 END AS INT) AS TieneTv
                 FROM Certificados c
-                WHERE c.TiempoVerificacionSeg IS NOT NULL
+                WHERE c.FechaCreacion IS NOT NULL
                 ORDER BY c.FechaCreacion DESC, c.IdCertificado DESC
             ) AS x
             ORDER BY x.FechaCreacion ASC, x.IdCertificado ASC
@@ -982,7 +997,10 @@ def obtener_dashboard_insights():
         abbr_counts = defaultdict(int)
         for r in cursor.fetchall():
             raw_name = (getattr(r, "NombreEstudiante", None) or "").strip() or "(Sin nombre)"
-            cid = int(getattr(r, "IdCertificado", 0) or 0)
+            cid = getattr(r, "IdCertificado", None)
+            cid = str(cid) if cid is not None else ""
+            tv_raw = getattr(r, "TvSeg", None)
+            tiene_tv = bool(int(getattr(r, "TieneTv", 0) or 0))
             base = _etiqueta_alumno_abreviada(raw_name)
             abbr_counts[base] += 1
             if abbr_counts[base] > 1:
@@ -994,7 +1012,8 @@ def obtener_dashboard_insights():
                     "id": cid,
                     "name": raw_name,
                     "label": label,
-                    "tv": float(getattr(r, "TvSeg", 0) or 0),
+                    "tv": float(tv_raw) if tiene_tv and tv_raw is not None else 0.0,
+                    "hasTv": tiene_tv,
                     "valid": bool(int(getattr(r, "EsValido", 0) or 0)),
                 }
             )

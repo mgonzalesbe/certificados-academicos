@@ -615,7 +615,7 @@ function getDrillChartConfig(metricKey) {
     return {
       title: "Tiempo de verificación de certificados (TV)",
       subtitle:
-        "Índice por certificado (hasta 50 recientes, orden por fecha de emisión). Eje X: nombre abreviado del alumno; eje Y: tiempo de la última verificación (s). Línea de meta 1,50 s.",
+        "Índice por certificado (hasta 50 recientes, orden por fecha de emisión). Eje X: nombre abreviado del alumno; eje Y: TV de la última verificación con PDF (0 si aún no se ha verificado).",
       kpis: [
         `TV global (promedio): ${dashboardState.avgVer.toFixed(4)} s`,
         `Mayor TV: ${toFiniteNumber(maxEntry.tv).toFixed(4)} s — ${maxEntry.name || "(Sin nombre)"}`,
@@ -682,6 +682,13 @@ function getDrillChartConfig(metricKey) {
                 const row = tvList[ctx.dataIndex];
                 const v = Number(ctx.parsed.y).toFixed(4);
                 if (!row) return `TV: ${v} s`;
+                if (!row.hasTv) {
+                  return [
+                    "TV: — (sin medición)",
+                    row.name || "—",
+                    "Verifique el PDF en la página pública para registrar el tiempo.",
+                  ];
+                }
                 const ok = row.valid ? "verificación válida" : "verificación no válida";
                 return [`TV: ${v} s`, row.name || "—", `Última medición: ${ok}`];
               },
