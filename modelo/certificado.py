@@ -334,6 +334,8 @@ def crear_certificado(datos_estudiante, created_by_user_id=None):
     # Resolver nombres finales (para PDF/firma) desde BD si hay IDs
     curso_nombre = (datos_estudiante.get("course") or "").strip() or None
     tipo_nombre = (datos_estudiante.get("type") or "").strip() or None
+    centro_nombre = None
+    logo_centro_bytes = None
     conn = get_db_connection()
     if not conn:
         raise RuntimeError("No se pudo conectar a la base de datos para resolver catálogos")
@@ -354,6 +356,22 @@ def crear_certificado(datos_estudiante, created_by_user_id=None):
             if not r:
                 raise ValueError("Tipo de credencial no válido o inactivo")
             tipo_nombre = str(r.Nombre)
+        cursor.execute(
+            """
+            SELECT Nombre, Logo FROM CentroEducativo
+            WHERE IdCentroEducativo = ? AND Estado = N'Activo'
+            """,
+            (id_centro_educativo,),
+        )
+        cr = cursor.fetchone()
+        if not cr:
+            raise ValueError("Centro educativo no válido o inactivo")
+        centro_nombre = str(cr.Nombre)
+        raw_logo = getattr(cr, "Logo", None)
+        if raw_logo is not None:
+            logo_centro_bytes = bytes(raw_logo) if not isinstance(raw_logo, (bytes, bytearray)) else bytes(raw_logo)
+            if len(logo_centro_bytes) == 0:
+                logo_centro_bytes = None
     finally:
         conn.close()
 
@@ -392,6 +410,8 @@ def crear_certificado(datos_estudiante, created_by_user_id=None):
             texto_cuerpo=body_text,
             incluir_meses=incluir_meses,
             meses=meses_pdf,
+            centro_nombre=centro_nombre,
+            logo_centro_bytes=logo_centro_bytes,
         )
     except Exception as e:
         pdf_error = str(e)

@@ -1,4 +1,4 @@
-"""Generación de PDF tipo diploma horizontal con QR de verificación."""
+"""Generación de PDF horizontal estilo reconocimiento oficial (marco, logos, cuerpo, firma, QR)."""
 
 import io
 import os
@@ -11,16 +11,10 @@ from reportlab.lib.units import cm
 from reportlab.lib.utils import ImageReader
 from reportlab.pdfgen import canvas
 
-# Universidad César Vallejo — rojo y azul institucional
-UCV_RED = colors.Color(0.75, 0.09, 0.12)
-UCV_RED_DARK = colors.Color(0.55, 0.06, 0.1)
-UCV_BLUE = colors.Color(0.0, 0.2, 0.55)
-UCV_BLUE_DARK = colors.Color(0.0, 0.14, 0.42)
-ACCENT_BLUE = colors.Color(0.45, 0.58, 0.82)
-CREAM = colors.Color(0.99, 0.985, 0.98)
-MUTED = colors.Color(0.38, 0.38, 0.4)
-
-INSTITUTION_LINE = "Universidad César Vallejo"
+# Estilo documento formal (marco dorado / negro / gris)
+FRAME_GOLD = colors.Color(0.62, 0.48, 0.18)
+MUTED = colors.Color(0.35, 0.35, 0.37)
+CORNER_GRAY = colors.Color(0.72, 0.72, 0.74)
 
 _ASSETS_DIR = os.path.normpath(
     os.path.join(os.path.dirname(__file__), "..", "vista", "assets", "imagenes", "certificados")
@@ -43,8 +37,9 @@ def _format_display_date(iso_date: str) -> str:
         return iso_date or ""
 
 
-def _wrap_centered_lines(c, text: str, cx: float, y_top: float, max_w: float, font: str, size: float, leading_pt: float):
-    """Dibuja texto centrado con varias líneas hacia abajo; devuelve la Y del último renglón dibujado (misma unidad que ReportLab)."""
+def _wrap_centered_lines(
+    c, text: str, cx: float, y_top: float, max_w: float, font: str, size: float, leading_pt: float
+):
     words = text.split()
     if not words:
         return y_top
@@ -60,26 +55,69 @@ def _wrap_centered_lines(c, text: str, cx: float, y_top: float, max_w: float, fo
             line = word
     if line:
         c.drawCentredString(cx, y, line)
+        y -= leading_pt
     return y
 
 
-def _draw_corner_flourishes(canvas_obj, x0: float, y0: float, x1: float, y1: float, color, stroke: float = 0.85):
-    """Esquinas tipo marco doble en las cuatro esquinas del rectángulo interior."""
-    L = 1.15 * cm
-    canvas_obj.setStrokeColor(color)
-    canvas_obj.setLineWidth(stroke)
-    # inferior izquierda
-    canvas_obj.line(x0, y0, x0 + L, y0)
-    canvas_obj.line(x0, y0, x0, y0 + L)
-    # inferior derecha
-    canvas_obj.line(x1, y0, x1 - L, y0)
-    canvas_obj.line(x1, y0, x1, y0 + L)
-    # superior izquierda
-    canvas_obj.line(x0, y1, x0 + L, y1)
-    canvas_obj.line(x0, y1, x0, y1 - L)
-    # superior derecha
-    canvas_obj.line(x1, y1, x1 - L, y1)
-    canvas_obj.line(x1, y1, x1, y1 - L)
+def _draw_ornate_double_frame(c, w: float, h: float):
+    """Marco doble con esquinas decorativas (aprox. al diploma de referencia)."""
+    m_out = 0.55 * cm
+    gap_gold = 0.32 * cm
+    gap_inner = 0.22 * cm
+    x0, y0 = m_out, m_out
+    x1, y1 = w - m_out, h - m_out
+
+    c.setStrokeColor(colors.black)
+    c.setLineWidth(1.0)
+    c.rect(x0, y0, x1 - x0, y1 - y0, fill=0, stroke=1)
+
+    xi0 = x0 + gap_gold
+    yi0 = y0 + gap_gold
+    xi1 = x1 - gap_gold
+    yi1 = y1 - gap_gold
+    c.setStrokeColor(FRAME_GOLD)
+    c.setLineWidth(2.2)
+    c.rect(xi0, yi0, xi1 - xi0, yi1 - yi0, fill=0, stroke=1)
+
+    xj0 = xi0 + gap_inner
+    yj0 = yi0 + gap_inner
+    xj1 = xi1 - gap_inner
+    yj1 = yi1 - gap_inner
+    c.setStrokeColor(colors.black)
+    c.setLineWidth(0.45)
+    c.rect(xj0, yj0, xj1 - xj0, yj1 - yj0, fill=0, stroke=1)
+
+    # Ornamentos en esquinas (trazos tipo filigrana simplificada)
+    L = 0.95 * cm
+    tick = 0.28 * cm
+    c.setStrokeColor(CORNER_GRAY)
+    c.setLineWidth(0.55)
+    corners = [
+        (xj0, yj0, 1, 1),
+        (xj1, yj0, -1, 1),
+        (xj0, yj1, 1, -1),
+        (xj1, yj1, -1, -1),
+    ]
+    for bx, by, sx, sy in corners:
+        ax = bx + sx * L
+        ay = by + sy * L
+        c.line(bx, by, ax, by)
+        c.line(bx, by, bx, ay)
+        c.line(bx + sx * tick, by + sy * tick, bx + sx * (L - tick), by + sy * (L - tick))
+
+
+def _draw_scaled_image(c, ir: ImageReader, cx: float, top_y: float, max_w: float, max_h: float, anchor: str):
+    """anchor: 'left' (borde izquierdo en cx) o 'right' (borde derecho en cx)."""
+    iw, ih = ir.getSize()
+    sc = min(max_w / float(iw), max_h / float(ih))
+    sw, sh = iw * sc, ih * sc
+    base_y = top_y - sh
+    if anchor == "right":
+        x = cx - sw
+    else:
+        x = cx
+    c.drawImage(ir, x, base_y, width=sw, height=sh, mask="auto")
+    return top_y - sh - 0.15 * cm
 
 
 def generar_pdf_diploma(
@@ -94,255 +132,191 @@ def generar_pdf_diploma(
     texto_cuerpo: str | None = None,
     incluir_meses: bool = False,
     meses: int | None = None,
+    *,
+    centro_nombre: str | None = None,
+    logo_centro_bytes: bytes | None = None,
 ):
     """
-    Dibuja el diploma en un archivo (str) o buffer binario (io.BytesIO).
+    Diploma horizontal estilo «reconocimiento»: logos superior, institución, título,
+    «Otorgado a», nombre, cuerpo en cursiva, firma central y QR de verificación.
+
+    Datos dinámicos desde la web: nombre, tipo_credencial, texto_cuerpo (párrafo),
+    curso/fecha en apoyo; centro_nombre y logo_centro_bytes desde CentroEducativo.
+
+    Firmante: variables CERT_FIRMANTE_NOMBRE y CERT_FIRMANTE_CARGO (opcional).
+    Logo derecho: archivos logo_secundario.png / logo_upao.png / logo_derecha.png en assets.
     """
     w, h = landscape(A4)
     c = canvas.Canvas(dest, pagesize=(w, h))
 
-    # Fondo crema
-    c.setFillColor(CREAM)
+    c.setFillColor(colors.white)
     c.rect(0, 0, w, h, fill=1, stroke=0)
+    _draw_ornate_double_frame(c, w, h)
 
-    margin_out = 0.85 * cm
-    margin_in = 1.35 * cm
-    # Marco exterior rojo, interior azul
-    c.setStrokeColor(UCV_RED_DARK)
-    c.setLineWidth(2.8)
-    c.rect(margin_out, margin_out, w - 2 * margin_out, h - 2 * margin_out, fill=0, stroke=1)
-    c.setStrokeColor(UCV_BLUE)
-    c.setLineWidth(0.7)
-    c.rect(margin_in, margin_in, w - 2 * margin_in, h - 2 * margin_in, fill=0, stroke=1)
+    margin_x = 1.85 * cm
+    inner_w = w - 2 * margin_x
+    cx = w / 2
 
-    inner_left = margin_in + 0.55 * cm
-    inner_right = w - margin_in - 0.55 * cm
-    inner_bottom = margin_in + 0.55 * cm
-    inner_top = h - margin_in - 0.55 * cm
-    _draw_corner_flourishes(c, inner_left, inner_bottom, inner_right, inner_top, UCV_BLUE_DARK, 0.85)
+    # --- Logos superiores (izq. / der.) ---
+    y_header_top = h - 1.55 * cm
+    y_below_logos = y_header_top
 
-    # Logo (opcional): colocar PNG/JPG en vista/assets/imagenes/certificados/logo.png
-    logo_path = _asset_path(
-        "logo.png",
-        "logo.jpg",
-        "logo.jpeg",
-        "logotipo.png",
-        "logotipo.jpg",
-    )
-    # Margen superior mayor para que el logo no quede pegado al borde del marco
-    logo_top_y = h - 1.75 * cm
-    y_below_header = logo_top_y
-    if logo_path:
-        ir_logo = ImageReader(logo_path)
-        iw, ih = ir_logo.getSize()
-        max_logo_w, max_logo_h = 13.5 * cm, 2.35 * cm
-        scale = min(max_logo_w / float(iw), max_logo_h / float(ih))
-        lw, lh = iw * scale, ih * scale
-        logo_bottom = logo_top_y - lh
-        c.drawImage(ir_logo, w / 2 - lw / 2, logo_bottom, width=lw, height=lh, mask="auto")
-        y_below_header = logo_bottom - 0.5 * cm
-    else:
-        y_below_header = h - 2.1 * cm
+    max_logo_w, max_logo_h = 4.2 * cm, 3.0 * cm
+    left_x = margin_x
+    right_x = w - margin_x
 
-    # Cabecera institucional
-    c.setFillColor(UCV_BLUE_DARK)
-    c.setFont("Helvetica-Bold", 9)
-    c.drawCentredString(w / 2, y_below_header, INSTITUTION_LINE.upper())
-
-    # Título principal = tipo de credencial
-    titulo = (tipo_credencial or "Certificado").strip().upper()
-    titulo_size = 20 if len(titulo) <= 42 else 17 if len(titulo) <= 56 else 14
-    c.setFillColor(UCV_RED_DARK)
-    c.setFont("Helvetica-Bold", titulo_size)
-    title_max = w - 4.2 * cm
-    tw = c.stringWidth(titulo, "Helvetica-Bold", titulo_size)
-    title_leading = titulo_size * 1.2
-    title_baseline = y_below_header - 0.65 * cm
-    if tw <= title_max:
-        c.drawCentredString(w / 2, title_baseline, titulo)
-        y_after_title = title_baseline
-    else:
-        y_after_title = _wrap_centered_lines(
-            c, titulo, w / 2, title_baseline + 0.15 * cm, title_max, "Helvetica-Bold", titulo_size, title_leading
+    left_ir = None
+    if logo_centro_bytes:
+        try:
+            left_ir = ImageReader(io.BytesIO(logo_centro_bytes))
+        except Exception:
+            left_ir = None
+    if left_ir is None:
+        lp = _asset_path(
+            "logo_regional.png",
+            "logo_izquierda.png",
+            "logo_gobierno.png",
+            "logo.png",
+        )
+        if lp:
+            left_ir = ImageReader(lp)
+    if left_ir:
+        y_below_logos = min(
+            y_below_logos,
+            _draw_scaled_image(c, left_ir, left_x, y_header_top, max_logo_w, max_logo_h, "left"),
         )
 
-    # Regla decorativa rojo / azul bajo el título
-    rule_y = y_after_title - 0.55 * cm
-    rule_w = min(12 * cm, w * 0.42)
-    c.setStrokeColor(UCV_RED)
-    c.setLineWidth(1.15)
-    c.line(w / 2 - rule_w / 2, rule_y, w / 2 + rule_w / 2, rule_y)
-    c.setLineWidth(0.4)
-    c.setStrokeColor(UCV_BLUE)
-    c.line(w / 2 - rule_w / 2 + 0.45 * cm, rule_y - 0.12 * cm, w / 2 + rule_w / 2 - 0.45 * cm, rule_y - 0.12 * cm)
+    right_path = _asset_path(
+        "logo_secundario.png",
+        "logo_upao.png",
+        "logo_derecha.png",
+        "logo_institucion.png",
+    )
+    if right_path:
+        right_ir = ImageReader(right_path)
+        y_below_logos = min(
+            y_below_logos,
+            _draw_scaled_image(c, right_ir, right_x, y_header_top, max_logo_w, max_logo_h, "right"),
+        )
 
-    c.setFillColor(MUTED)
-    c.setFont("Helvetica-Oblique", 10.5)
-    c.drawCentredString(w / 2, rule_y - 0.75 * cm, "Se certifica que")
+    y = y_below_logos - 0.35 * cm
 
-    nombre_clean = (nombre or "").strip().upper()
-    c.setFillColor(UCV_BLUE_DARK)
-    name_size = 24
-    name_max = w - 4.5 * cm
-    while name_size >= 18 and c.stringWidth(nombre_clean, "Times-Bold", name_size) > name_max:
-        name_size -= 1
-    c.setFont("Times-Bold", name_size)
-    c.drawCentredString(w / 2, rule_y - 1.85 * cm, nombre_clean)
-
-    c.setFont("Helvetica", 10.5)
+    # Institución (nombre del centro educativo o texto por defecto)
+    inst = (centro_nombre or os.environ.get("CERT_INSTITUCION_LINE") or "Institución educativa").strip().upper()
     c.setFillColor(colors.black)
+    c.setFont("Helvetica-Bold", 10.5)
+    # Tamaño adaptable si el nombre es largo
+    fs = 10.5
+    while fs >= 8 and c.stringWidth(inst, "Helvetica-Bold", fs) > inner_w:
+        fs -= 0.5
+    c.setFont("Helvetica-Bold", fs)
+    c.drawCentredString(cx, y, inst)
+    y -= 0.85 * cm
+
+    # Título del documento = tipo de credencial (ej. RECONOCIMIENTO)
+    titulo = (tipo_credencial or "Certificado").strip().upper()
+    titulo_size = 22 if len(titulo) <= 36 else 18 if len(titulo) <= 52 else 15
+    c.setFont("Helvetica-Bold", titulo_size)
+    title_leading = titulo_size * 1.15
+    if c.stringWidth(titulo, "Helvetica-Bold", titulo_size) <= inner_w:
+        c.drawCentredString(cx, y, titulo)
+        y -= title_leading
+    else:
+        y = _wrap_centered_lines(
+            c, titulo, cx, y, inner_w, "Helvetica-Bold", titulo_size, title_leading
+        )
+        y -= 0.25 * cm
+
+    y -= 0.35 * cm
+
+    # «Otorgado a :» (izquierda, cursiva)
+    c.setFillColor(colors.black)
+    c.setFont("Times-Italic", 12)
+    c.drawString(margin_x, y, "Otorgado a :")
+    y -= 0.75 * cm
+
+    # Nombre del beneficiario
+    nombre_clean = (nombre or "").strip().upper()
+    name_size = 20
+    c.setFont("Helvetica-Bold", name_size)
+    while name_size >= 14 and c.stringWidth(nombre_clean, "Helvetica-Bold", name_size) > inner_w:
+        name_size -= 0.5
+    c.setFont("Helvetica-Bold", name_size)
+    c.drawCentredString(cx, y, nombre_clean)
+    y -= name_size * 1.25
+
+    y -= 0.35 * cm
+
+    # Cuerpo (cursiva, centrado)
     if texto_cuerpo and texto_cuerpo.strip():
         body = texto_cuerpo.strip()
     else:
         body = (
-            f"Ha aprobado satisfactoriamente el programa «{curso}» en la modalidad "
-            f"«{tipo_credencial}», cumpliendo con los requisitos académicos establecidos."
+            f"Por haber culminado satisfactoriamente el programa «{curso}» "
+            f"en la modalidad «{tipo_credencial}», conforme a los requisitos académicos establecidos."
         )
 
-    y_text = rule_y - 2.75 * cm
-    max_w = w - 5.2 * cm
-    first_para = True
-    for para in body.split("\n"):
-        para = para.strip()
-        if not para:
-            continue
-        if not first_para:
-            y_text -= 0.3 * cm
-        first_para = False
-        words = para.split()
-        line = ""
-        for word in words:
-            test = (line + " " + word).strip()
-            if c.stringWidth(test, "Helvetica", 10.5) <= max_w:
-                line = test
-            else:
-                c.drawCentredString(w / 2, y_text, line)
-                y_text -= 0.52 * cm
-                line = word
-        if line:
-            c.drawCentredString(w / 2, y_text, line)
-            y_text -= 0.52 * cm
-    y_text -= 0.33 * cm
+    body_size = 11
+    leading = body_size * 1.35
+    c.setFont("Times-Italic", body_size)
+    c.setFillColor(colors.black)
+    y = _wrap_centered_lines(c, body, cx, y, inner_w, "Times-Italic", body_size, leading)
+    y -= 0.45 * cm
 
-    c.setFont("Helvetica", 9.5)
+    # Metadatos discretos (horas / meses / fecha)
+    c.setFont("Helvetica", 8)
     c.setFillColor(MUTED)
-    c.drawCentredString(
-        w / 2,
-        y_text,
-        f"Fecha de emisión: {_format_display_date(fecha_emision)}",
-    )
-
-    row_y = y_text - 1.75 * cm
-    uid_part = cert_id.split("-")[-1] if "-" in cert_id else cert_id
-    num_display = (uid_part[:13] + "…") if len(uid_part) > 14 else uid_part
-
-    def col_num(xc, col_w, num, label, font_size=20):
-        c.setFillColor(UCV_RED)
-        c.setFont("Helvetica-Bold", font_size)
-        c.drawCentredString(xc + col_w / 2, row_y, str(num))
-        c.setFillColor(MUTED)
-        c.setFont("Helvetica", 8.5)
-        c.drawCentredString(xc + col_w / 2, row_y - 0.62 * cm, label)
-
+    meta_parts = [f"Fecha de emisión: {_format_display_date(fecha_emision)}"]
+    if horas and horas > 0:
+        meta_parts.append(f"Carga horaria referencial: {horas} h")
     if incluir_meses and meses is not None:
-        col_w = (w - 4 * cm) / 3
-        x0 = 2 * cm
-        col_num(x0, col_w, meses, "Meses de formación")
-        cx_mid = x0 + col_w + col_w / 2
-        c.setFont("Helvetica-Bold", 15)
-        c.setFillColor(UCV_BLUE_DARK)
-        c.drawCentredString(cx_mid, row_y, num_display.upper())
-        c.setFillColor(MUTED)
-        c.setFont("Helvetica", 8.5)
-        c.drawCentredString(cx_mid, row_y - 0.62 * cm, "Certificado N.º")
-        col_num(x0 + 2 * col_w, col_w, horas, "Horas académicas")
-    else:
-        col_w = (w - 4 * cm) / 2
-        x0 = 2 * cm
-        cx_mid = x0 + col_w / 2
-        c.setFont("Helvetica-Bold", 15)
-        c.setFillColor(UCV_BLUE_DARK)
-        c.drawCentredString(cx_mid, row_y, num_display.upper())
-        c.setFillColor(MUTED)
-        c.setFont("Helvetica", 8.5)
-        c.drawCentredString(cx_mid, row_y - 0.62 * cm, "Certificado N.º")
-        col_num(x0 + col_w, col_w, horas, "Horas académicas")
+        meta_parts.append(f"Duración referencial: {meses} mes(es)")
+    c.drawCentredString(cx, y, "   ·   ".join(meta_parts))
+    y -= 0.65 * cm
 
-    # --- Bloque inferior: firmas en los extremos, QR centrado debajo (sin solapamiento) ---
-    path_dir = _asset_path(
-        "firma_director_academico.png",
-        "firma_director_academico.jpg",
-        "firma_director.png",
-    )
-    path_coord = _asset_path(
-        "firma_coordinador.png",
-        "firma_coordinador.jpg",
-        "firma_coordinacion.png",
-    )
-    # Firmas en columnas laterales equilibradas (sin pegarlas al borde ni al QR)
-    left_cx = 4.85 * cm
-    right_cx = w - 4.85 * cm
-    max_sig_w, max_sig_h = 3.2 * cm, 1.45 * cm
+    # --- Firma central (estilo diploma de referencia) ---
+    firmante = (os.environ.get("CERT_FIRMANTE_NOMBRE") or "").strip()
+    cargo = (os.environ.get("CERT_FIRMANTE_CARGO") or "").strip()
+    sig_line_y = 2.85 * cm
+    line_half = 4.2 * cm
+    c.setStrokeColor(colors.black)
+    c.setLineWidth(0.6)
+    c.line(cx - line_half, sig_line_y, cx + line_half, sig_line_y)
 
-    qr = qrcode.QRCode(version=None, box_size=4, border=1)
+    ty = sig_line_y + 0.35 * cm
+    if firmante:
+        c.setFont("Helvetica", 9)
+        c.setFillColor(colors.black)
+        c.drawCentredString(cx, ty, firmante)
+        ty += 0.38 * cm
+    if cargo:
+        c.setFont("Helvetica-Bold", 8.5)
+        c.drawCentredString(cx, ty, cargo.upper())
+
+    # --- QR verificación (esquina inferior derecha) ---
+    qr = qrcode.QRCode(version=None, box_size=3, border=1)
     qr.add_data(qr_payload)
     qr.make(fit=True)
-    pil_img = qr.make_image(fill_color="#001f5c", back_color="white")
+    pil_img = qr.make_image(fill_color="black", back_color="white")
     buf = io.BytesIO()
     pil_img.save(buf, format="PNG")
     buf.seek(0)
-    qr_size = 3.45 * cm
-    qx = w / 2 - qr_size / 2
-    qy = 1.95 * cm
-
-    qr_top = qy + qr_size
-    gap_qr_to_label = 0.62 * cm
-    label_baseline = qr_top + gap_qr_to_label
-    gap_label_to_sig = 0.48 * cm
-    sig_img_bottom = label_baseline + gap_label_to_sig
-
-    def _draw_sig_image(path: str, cx: float, img_bottom_y: float) -> float:
-        """Dibuja la firma con borde inferior en img_bottom_y; devuelve la Y del borde superior."""
-        ir = ImageReader(path)
-        iw, ih = ir.getSize()
-        sc = min(max_sig_w / float(iw), max_sig_h / float(ih))
-        sw, sh = iw * sc, ih * sc
-        base_y = img_bottom_y
-        c.drawImage(ir, cx - sw / 2, base_y, width=sw, height=sh, mask="auto")
-        return base_y + sh
-
-    line_half = 2.85 * cm
-    if path_dir:
-        _draw_sig_image(path_dir, left_cx, sig_img_bottom)
-    else:
-        c.setStrokeColor(UCV_BLUE_DARK)
-        c.setLineWidth(0.45)
-        line_y = sig_img_bottom + 0.88 * cm
-        c.line(left_cx - line_half, line_y, left_cx + line_half, line_y)
-
-    if path_coord:
-        _draw_sig_image(path_coord, right_cx, sig_img_bottom)
-    else:
-        c.setStrokeColor(UCV_BLUE_DARK)
-        c.setLineWidth(0.45)
-        line_y = sig_img_bottom + 0.88 * cm
-        c.line(right_cx - line_half, line_y, right_cx + line_half, line_y)
-
-    label_y = label_baseline
-    c.setFont("Helvetica", 8.5)
-    c.setFillColor(MUTED)
-    c.drawCentredString(left_cx, label_y, "Director académico")
-    c.drawCentredString(right_cx, label_y, "Coordinación")
-
-    c.setStrokeColor(ACCENT_BLUE)
-    c.setLineWidth(0.6)
-    pad = 0.12 * cm
+    qr_size = 2.65 * cm
+    qx = w - margin_x - qr_size
+    qy = 1.05 * cm
+    c.setStrokeColor(MUTED)
+    c.setLineWidth(0.5)
+    pad = 0.1 * cm
     c.rect(qx - pad, qy - pad, qr_size + 2 * pad, qr_size + 2 * pad, fill=0, stroke=1)
     c.drawImage(ImageReader(buf), qx, qy, width=qr_size, height=qr_size, mask="auto")
-
+    c.setFont("Helvetica", 6.5)
     c.setFillColor(MUTED)
-    c.setFont("Helvetica", 7.5)
-    c.drawCentredString(w / 2, qy - 0.42 * cm, "Código de verificación — documento electrónico autenticable")
+    c.drawCentredString(qx + qr_size / 2, qy - 0.38 * cm, "Verificación")
+
+    # Identificador breve (pie izquierdo)
+    uid_short = cert_id.replace("UCV-", "")[:16]
+    c.setFont("Helvetica", 7)
+    c.drawString(margin_x, 1.0 * cm, f"Id. documento: {uid_short}")
 
     c.showPage()
     c.save()
@@ -359,6 +333,9 @@ def generar_pdf_diploma_bytes(
     texto_cuerpo: str | None = None,
     incluir_meses: bool = False,
     meses: int | None = None,
+    *,
+    centro_nombre: str | None = None,
+    logo_centro_bytes: bytes | None = None,
 ) -> bytes:
     """Genera el PDF en memoria (para guardar en SQL Server VARBINARY)."""
     buf = io.BytesIO()
@@ -374,5 +351,7 @@ def generar_pdf_diploma_bytes(
         texto_cuerpo=texto_cuerpo,
         incluir_meses=incluir_meses,
         meses=meses,
+        centro_nombre=centro_nombre,
+        logo_centro_bytes=logo_centro_bytes,
     )
     return buf.getvalue()
