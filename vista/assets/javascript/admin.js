@@ -419,7 +419,7 @@ function getDrillChartConfig(metricKey) {
     ...topTypes.map((x) => toFiniteNumber(x.count)),
   ];
   return {
-    title: "Tiempo promedio verificación (TV)",
+    title: "Tiempo de verificación de certificados (TV)",
     subtitle: "Contexto operativo: carga por cursos y tipos más usados.",
     kpis: [
       `TV global: ${dashboardState.avgVer.toFixed(4)} s`,
