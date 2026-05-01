@@ -35,15 +35,50 @@ TIPOS_CREDENCIAL = (
 
 
 def _load_or_create_private_key():
+    """
+    Orden de carga (importante en Render: el disco del contenedor es efímero).
+
+    1) ISSUER_PRIVATE_KEY_B64 — PEM PKCS8 en Base64 (recomendado en Render).
+    2) ISSUER_PRIVATE_KEY_PEM — PEM completo; use \\n en .env si va en una sola línea.
+    3) Archivo modelo/issuer_private_key.pem (desarrollo local).
+    4) Generar clave nueva; si el disco no es escribible, solo queda en memoria (malo en producción).
+    """
+    pem_b64 = (os.environ.get("ISSUER_PRIVATE_KEY_B64") or "").strip()
+    if pem_b64:
+        try:
+            pem = base64.b64decode(pem_b64)
+            return load_pem_private_key(pem, password=None)
+        except Exception as e:
+            raise RuntimeError(
+                "ISSUER_PRIVATE_KEY_B64 no es un PEM válido en Base64. "
+                "Genérelo leyendo modelo/issuer_private_key.pem y codificando todo el PEM en Base64."
+            ) from e
+
+    pem_env = (os.environ.get("ISSUER_PRIVATE_KEY_PEM") or "").strip()
+    if pem_env:
+        try:
+            pem = pem_env.replace("\\n", "\n").encode("utf-8")
+            return load_pem_private_key(pem, password=None)
+        except Exception as e:
+            raise RuntimeError("ISSUER_PRIVATE_KEY_PEM no es un PEM válido.") from e
+
     if os.path.isfile(_KEY_PATH):
         with open(_KEY_PATH, "rb") as f:
             return load_pem_private_key(f.read(), password=None)
+
     private_key = ec.generate_private_key(ec.SECP256R1())
-    pem = private_key.private_bytes(
-        Encoding.PEM, PrivateFormat.PKCS8, NoEncryption()
-    )
-    with open(_KEY_PATH, "wb") as f:
-        f.write(pem)
+    pem = private_key.private_bytes(Encoding.PEM, PrivateFormat.PKCS8, NoEncryption())
+    try:
+        with open(_KEY_PATH, "wb") as f:
+            f.write(pem)
+        print("Clave emisora generada y guardada en issuer_private_key.pem")
+    except OSError as e:
+        print(
+            "ADVERTENCIA CRÍTICA: no se pudo escribir issuer_private_key.pem (disco no persistente). "
+            "En Render defina ISSUER_PRIVATE_KEY_B64 con el PEM en Base64; si no, al reiniciar el servicio "
+            "cambiará la clave y los certificados antiguos dejarán de validar. "
+            f"Detalle: {e}"
+        )
     return private_key
 
 
