@@ -365,6 +365,12 @@
                 class="w-full p-3 border border-gray-300 rounded-lg outline-none"
                 placeholder="Párrafo en cursiva centrado. Si lo deja vacío, no aparece texto de cuerpo en el PDF."
               ></textarea>
+              <p class="text-xs text-gray-500 mt-1">
+                Marcadores (se rellenan al generar con el curso y tipo elegidos arriba):
+                <code class="bg-gray-100 px-1 rounded">[[CURSO]]</code>,
+                <code class="bg-gray-100 px-1 rounded">[[TIPO]]</code>.
+                El título grande bajo el hospital sale del tipo de credencial (catálogo), no hace falta repetirlo aquí.
+              </p>
             </div>
             <div class="md:col-span-2">
               <button
@@ -655,7 +661,10 @@
             </h3>
             <p class="text-sm text-gray-600 mb-4">
               Guarde párrafos que use con frecuencia; en Emisión podrá elegir uno y
-              ajustarlo antes de generar el PDF.
+              ajustarlo antes de generar el PDF. Puede usar los marcadores
+              <code class="text-xs bg-gray-100 px-1 rounded">[[CURSO]]</code> y
+              <code class="text-xs bg-gray-100 px-1 rounded">[[TIPO]]</code>
+              para insertar el nombre del curso y el tipo de credencial elegidos al emitir.
             </p>
             <form
               id="form-new-body-preset"
@@ -673,7 +682,7 @@
                 rows="4"
                 required
                 class="p-3 border rounded-lg outline-none md:col-span-2"
-                placeholder="Texto del párrafo (aparece en cursiva centrado en el PDF)"
+                placeholder="Ej. Por haber culminado satisfactoriamente el [[CURSO]] en … (cursiva centrada en el PDF)"
               ></textarea>
               <button
                 type="submit"

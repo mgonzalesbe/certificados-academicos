@@ -16,7 +16,7 @@ MUTED = colors.Color(0.35, 0.35, 0.37)
 FONT_SANS_BOLD = "Helvetica-Bold"
 FONT_SANS = "Helvetica"
 FONT_SERIF_ITALIC = "Times-Italic"
-# «HOSPITAL DISTRITAL DE LAREDO» y «RECONOCIMIENTO»: mismo tamaño (Helvetica-Bold)
+# «HOSPITAL DISTRITAL DE LAREDO» y línea de tipo de credencial: mismo tamaño (Helvetica-Bold)
 FONT_HEADER_LINE_PT = 23.0
 FONT_HEADER_LINE_MIN = 16.0
 FONT_OTORGADO_SIZE = 13.5
@@ -101,6 +101,19 @@ def _wrap_centered_lines(
     return y
 
 
+def expand_diploma_placeholders(text: str, curso: str, tipo_credencial: str) -> str:
+    """
+    Sustituye marcadores del cuerpo del diploma al emitir (curso y tipo vienen del catálogo).
+
+    Marcadores reconocidos: ``[[CURSO]]`` → nombre del curso; ``[[TIPO]]`` → tipo de credencial.
+    """
+    if not text:
+        return text
+    curso_txt = (curso or "").strip()
+    tipo_txt = (tipo_credencial or "").strip()
+    return text.replace("[[CURSO]]", curso_txt).replace("[[TIPO]]", tipo_txt)
+
+
 def _draw_scaled_image(c, ir: ImageReader, cx: float, top_y: float, max_w: float, max_h: float, anchor: str):
     """anchor: 'left' (borde izquierdo en cx) o 'right' (borde derecho en cx)."""
     iw, ih = ir.getSize()
@@ -123,6 +136,7 @@ def _draw_certificate_header(
     inner_w: float,
     cx: float,
     logo_derecho_bytes: bytes | None,
+    tipo_credencial: str,
 ) -> float:
     """
     Logos superior izquierdo (regional, assets) y derecho (universidad, bytes): mismo tamaño máximo,
@@ -171,7 +185,7 @@ def _draw_certificate_header(
     y = y_below_logos - 0.28 * cm - title_block_drop
 
     inst = "HOSPITAL DISTRITAL DE LAREDO"
-    titulo = "RECONOCIMIENTO"
+    titulo = ((tipo_credencial or "").strip() or "RECONOCIMIENTO").upper()
     c.setFillColor(colors.black)
     fs = FONT_HEADER_LINE_PT
     while fs >= FONT_HEADER_LINE_MIN and (
@@ -209,6 +223,7 @@ def generar_pdf_diploma(
     títulos, cuerpo opcional, firma y QR. Sin plantilla solo se deja el fondo blanco (el marco va en la imagen).
     El logo izquierdo es el archivo estático regional (assets).
     Si ``texto_cuerpo`` está vacío, no se dibuja párrafo de cuerpo (el redactor define el inicio al escribir).
+    En el cuerpo se expanden ``[[CURSO]]`` y ``[[TIPO]]`` con los valores de ``curso`` y ``tipo_credencial``.
     """
     w, h = landscape(A4)
     c = canvas.Canvas(dest, pagesize=(w, h))
@@ -225,7 +240,9 @@ def generar_pdf_diploma(
     if plantilla_ir:
         _draw_background_cover(c, w, h, plantilla_ir)
 
-    y = _draw_certificate_header(c, w, h, margin_x, inner_w, cx, logo_derecho_bytes)
+    y = _draw_certificate_header(
+        c, w, h, margin_x, inner_w, cx, logo_derecho_bytes, tipo_credencial
+    )
 
     c.setFillColor(colors.black)
     c.setFont(FONT_SERIF_ITALIC, FONT_OTORGADO_SIZE)
@@ -246,7 +263,7 @@ def generar_pdf_diploma(
 
     # Cuerpo (cursiva Times, centrado — solo si el usuario o catálogo aportan texto)
     if texto_cuerpo and texto_cuerpo.strip():
-        body = texto_cuerpo.strip()
+        body = expand_diploma_placeholders(texto_cuerpo.strip(), curso, tipo_credencial)
         body_size = FONT_BODY_SIZE
         leading = body_size * FONT_BODY_LEADING_MULT
         c.setFont(FONT_SERIF_ITALIC, body_size)
@@ -331,7 +348,10 @@ def generar_pdf_diploma_bytes(
     doctor_genero: str | None = None,
     plantilla_fondo_bytes: bytes | None = None,
 ) -> bytes:
-    """Genera el PDF en memoria (para guardar en SQL Server VARBINARY)."""
+    """Genera el PDF en memoria (para guardar en SQL Server VARBINARY).
+
+    En ``texto_cuerpo`` se expanden ``[[CURSO]]`` y ``[[TIPO]]`` con ``curso`` y ``tipo_credencial``.
+    """
     buf = io.BytesIO()
     generar_pdf_diploma(
         buf,

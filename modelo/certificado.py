@@ -21,7 +21,7 @@ from modelo.database import (
     registrar_auditoria_certificado,
 )
 from modelo import auth_usuarios
-from modelo.pdf_diploma import generar_pdf_diploma_bytes
+from modelo.pdf_diploma import expand_diploma_placeholders, generar_pdf_diploma_bytes
 
 _KEY_PATH = os.path.join(os.path.dirname(__file__), "issuer_private_key.pem")
 _MAX_FIELD_LEN = 100
@@ -465,6 +465,12 @@ def crear_certificado(datos_estudiante, created_by_user_id=None):
     if not tipo_nombre:
         raise ValueError("Debe indicar el tipo de credencial")
 
+    texto_cuerpo_bd = (
+        expand_diploma_placeholders(body_text, curso_nombre, tipo_nombre)
+        if body_text
+        else None
+    )
+
     if id_tipo_credencial is None:
         # fallback: resolver por nombre si existen semillas
         id_tipo_credencial = obtener_id_tipo_credencial_por_nombre(tipo_nombre)
@@ -529,7 +535,7 @@ def crear_certificado(datos_estudiante, created_by_user_id=None):
             pdf_bytes,
             recipient_id,
             created_by,
-            body_text,
+            texto_cuerpo_bd,
             tgc,
             id_centro_educativo,
             id_firma_doctores,
