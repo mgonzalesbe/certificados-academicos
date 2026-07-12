@@ -16,6 +16,9 @@ _TRUSTED = os.environ.get("DB_TRUSTED", "no").lower() in ("1", "true", "yes", "y
 _ENCRYPT = os.environ.get("DB_ENCRYPT", "yes").lower() in ("1", "true", "yes", "y")
 _TRUST_SERVER_CERT = os.environ.get("DB_TRUST_SERVER_CERTIFICATE", "no").lower() in ("1", "true", "yes", "y")
 _CONNECTION_TIMEOUT = int(os.environ.get("DB_CONNECTION_TIMEOUT", "30"))
+# En Render un timeout alto + varios reintentos provoca 502 en el proxy.
+if os.environ.get("RENDER") and not os.environ.get("DB_CONNECTION_TIMEOUT"):
+    _CONNECTION_TIMEOUT = 15
 _CONNECT_RETRIES = max(1, int(os.environ.get("DB_CONNECT_RETRIES", "5")))
 _CONNECT_RETRY_DELAY = float(os.environ.get("DB_CONNECT_RETRY_DELAY_SEC", "0.6"))
 
@@ -111,30 +114,42 @@ class _PymssqlConnectionAdapter:
 
 def _get_db_connection_once():
     """Un intento de conexión (pyodbc, luego pymssql si aplica)."""
+    # En Render/Linux casi nunca hay ODBC Driver; preferir pymssql evita timeouts largos.
+    prefer_pymssql = os.environ.get("DB_PREFER_PYMSSQL", "").lower() in ("1", "true", "yes", "y")
+    if not prefer_pymssql and os.environ.get("RENDER"):
+        prefer_pymssql = True
+
+    def _connect_pymssql():
+        conn = pymssql.connect(
+            server=_SERVER,
+            user=os.environ.get("DB_USER", ""),
+            password=os.environ.get("DB_PASSWORD", ""),
+            database=_DATABASE,
+            port=int(_PORT),
+            login_timeout=_CONNECTION_TIMEOUT,
+            timeout=_CONNECTION_TIMEOUT,
+        )
+        print("Conexión SQL Server establecida con pymssql.")
+        return _PymssqlConnectionAdapter(conn)
+
+    if prefer_pymssql:
+        try:
+            return _connect_pymssql()
+        except Exception as e:
+            print(f"ADVERTENCIA: Falló pymssql: {e}")
+            return None
+
     try:
         conn = pyodbc.connect(DB_CONNECTION_STRING)
         return conn
     except Exception as e:
         err = str(e)
-        if "Can't open lib" in err or "SQLDriverConnect" in err:
-            try:
-                # Fallback útil para Render cuando no está instalado msodbcsql18.
-                conn = pymssql.connect(
-                    server=_SERVER,
-                    user=os.environ.get("DB_USER", ""),
-                    password=os.environ.get("DB_PASSWORD", ""),
-                    database=_DATABASE,
-                    port=int(_PORT),
-                    login_timeout=_CONNECTION_TIMEOUT,
-                    timeout=_CONNECTION_TIMEOUT,
-                )
-                print("Conexión SQL Server establecida con fallback pymssql.")
-                return _PymssqlConnectionAdapter(conn)
-            except Exception as e2:
-                print(f"ADVERTENCIA: Falló pyodbc y también pymssql. Error pyodbc: {e}; error pymssql: {e2}")
-                return None
-        print(f"ADVERTENCIA: No se pudo conectar a SQL Server. Error: {e}")
-        return None
+        # Cualquier fallo de pyodbc: intentar pymssql (Render sin msodbcsql, firewall, etc.)
+        try:
+            return _connect_pymssql()
+        except Exception as e2:
+            print(f"ADVERTENCIA: Falló pyodbc y también pymssql. Error pyodbc: {e}; error pymssql: {e2}")
+            return None
 
 
 def get_db_connection():
@@ -142,17 +157,22 @@ def get_db_connection():
     Conexión a SQL Server con reintentos (Azure / Render: arranque en frío, firewall, pausa serverless).
 
     Variables opcionales: DB_CONNECT_RETRIES (default 5), DB_CONNECT_RETRY_DELAY_SEC (default 0.6).
+    En Render se reduce el número de reintentos para no superar el timeout del proxy (502).
     """
-    for attempt in range(_CONNECT_RETRIES):
+    retries = _CONNECT_RETRIES
+    if os.environ.get("RENDER"):
+        retries = min(retries, 2)
+
+    for attempt in range(retries):
         conn = _get_db_connection_once()
         if conn:
             if attempt > 0:
                 print(f"Conexión SQL establecida tras {attempt + 1} intento(s).")
             return conn
-        if attempt < _CONNECT_RETRIES - 1:
+        if attempt < retries - 1:
             delay = _CONNECT_RETRY_DELAY * (attempt + 1)
             time.sleep(delay)
-    print(f"ADVERTENCIA: Sin conexión a SQL tras {_CONNECT_RETRIES} intento(s).")
+    print(f"ADVERTENCIA: Sin conexión a SQL tras {retries} intento(s).")
     return None
 
 
