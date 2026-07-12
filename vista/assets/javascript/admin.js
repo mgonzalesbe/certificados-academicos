@@ -85,7 +85,7 @@ const ModalUtil = {
       sent.className = mailSent ? "text-emerald-800" : "text-amber-800";
       sent.textContent = mailSent
         ? "La notificación se ha enviado por correo electrónico al alumno (incluye el certificado en PDF)."
-        : "No se pudo enviar el correo automático. Revise la configuración SMTP o avise al alumno por otro medio.";
+        : "No se pudo enviar el correo automático (Gmail API). Revise GMAIL_* / MAIL_ENABLED en Render o avise al alumno por otro medio.";
       box.appendChild(sent);
 
       const addLine = (label, value) => {

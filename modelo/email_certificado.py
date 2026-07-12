@@ -82,7 +82,7 @@ def enviar_correo_certificado_asignado(
     """
     Envía aviso de certificado asignado con enlace directo de descarga (token)
     y opcionalmente adjunta el archivo PDF.
-    Usa SIEMPRE la cuenta unica configurada por variables SMTP_* y MAIL_FROM.
+    Usa SIEMPRE la cuenta única configurada por GMAIL_CLIENT_ID/SECRET/REFRESH_TOKEN/SENDER.
     """
     try:
         _, _, _, mail_from = _gmail_settings()

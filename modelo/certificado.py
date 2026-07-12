@@ -344,14 +344,14 @@ def _intentar_enviar_correo_certificado_asignado(
     created_by_user_id=None,
     pdf_bytes=None,
 ):
-    """Si hay SMTP configurado, avisa al estudiante con enlace de descarga directa y adjunto."""
+    """Si Gmail API está configurada, avisa al estudiante con enlace de descarga y adjunto."""
     from urllib.parse import quote
 
     from modelo.email_certificado import correo_habilitado, enviar_correo_certificado_asignado
     from modelo.pdf_download_token import crear_token_descarga_pdf
 
     if not correo_habilitado():
-        print("DEBUG: Correo no habilitado (MAIL_ENABLED=false o faltan variables SMTP)")
+        print("DEBUG: Correo no habilitado (MAIL_ENABLED=false o faltan GMAIL_CLIENT_ID/SECRET/REFRESH_TOKEN/SENDER)")
         return False
     u = auth_usuarios.obtener_usuario_por_id(recipient_user_id)
     if not u:
