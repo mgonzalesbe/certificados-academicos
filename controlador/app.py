@@ -2,6 +2,7 @@ import sys
 import os
 import re
 import base64
+import threading
 from functools import wraps
 
 from io import BytesIO
@@ -1040,10 +1041,20 @@ def api_certificates():
     })
 
 
-# Arranque también bajo Gunicorn (Render): init fuera de __main__
-init_db()
-auth_usuarios.asegurar_admin_por_defecto()
-certificado.init_stats_from_db()
+def _bootstrap_db():
+    """Init de BD en segundo plano para no bloquear el bind del puerto (Render)."""
+    try:
+        print("Bootstrap BD: iniciando...")
+        init_db()
+        auth_usuarios.asegurar_admin_por_defecto()
+        certificado.init_stats_from_db()
+        print("Bootstrap BD: listo.")
+    except Exception as e:
+        print(f"Bootstrap BD: error (la app sigue escuchando): {e}")
+
+
+# Bajo Gunicorn el puerto debe abrirse ya; la BD puede tardar (Azure SQL / firewall).
+threading.Thread(target=_bootstrap_db, name="db-bootstrap", daemon=True).start()
 
 if __name__ == '__main__':
     _debug = os.environ.get('FLASK_DEBUG', 'false').lower() in ('1', 'true', 'yes', 'y')
