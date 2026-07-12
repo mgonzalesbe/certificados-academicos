@@ -65,7 +65,6 @@ const ModalUtil = {
       const {
         certId,
         timeSec,
-        mailSent,
         studentName,
         courseName,
         typeName,
@@ -80,13 +79,6 @@ const ModalUtil = {
       lead.textContent =
         "El certificado ha sido generado y registrado correctamente en el sistema.";
       box.appendChild(lead);
-
-      const sent = document.createElement("p");
-      sent.className = mailSent ? "text-emerald-800" : "text-amber-800";
-      sent.textContent = mailSent
-        ? "La notificación se ha enviado por correo electrónico al alumno (incluye el certificado en PDF)."
-        : "No se pudo enviar el correo automático (Gmail API). Revise GMAIL_* / MAIL_ENABLED en Render o avise al alumno por otro medio.";
-      box.appendChild(sent);
 
       const addLine = (label, value) => {
         const p = document.createElement("p");
@@ -1533,7 +1525,6 @@ document.getElementById("form-create").addEventListener("submit", async (e) => {
     await ModalUtil.showCertificateGenerated({
       certId: result.cert.id,
       timeSec: result.time,
-      mailSent: Boolean(result.cert?.mailSent),
       studentName: result.cert?.name || studentName,
       courseName: result.cert?.course || "",
       typeName: result.cert?.type || "",
