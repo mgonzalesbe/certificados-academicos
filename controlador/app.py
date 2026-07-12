@@ -73,6 +73,11 @@ def student_required_api(f):
     return wrapped
 
 
+@app.route('/healthz')
+def healthz():
+    return jsonify({'status': 'ok'}), 200
+
+
 @app.route('/')
 def index():
     if session.get('user_id'):
@@ -1035,11 +1040,12 @@ def api_certificates():
     })
 
 
-if __name__ == '__main__':
-    init_db()
-    auth_usuarios.asegurar_admin_por_defecto()
-    certificado.init_stats_from_db()
+# Arranque también bajo Gunicorn (Render): init fuera de __main__
+init_db()
+auth_usuarios.asegurar_admin_por_defecto()
+certificado.init_stats_from_db()
 
+if __name__ == '__main__':
     _debug = os.environ.get('FLASK_DEBUG', 'false').lower() in ('1', 'true', 'yes', 'y')
     _port = int(os.environ.get('PORT', '5000'))
     _host = os.environ.get('FLASK_HOST', '0.0.0.0')
